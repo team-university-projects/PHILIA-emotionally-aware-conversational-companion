@@ -1,0 +1,67 @@
+# ── Virtual Environment ───────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Environment & Secrets ─────────────────────────────────────────────────────
+.env
+*.env.local
+*.env.*.local
+.env.example
+
+# ── Model Weights ─────────────────────────────────────────────────────────────
+# Don't commit large model files — use HuggingFace Hub or Git LFS instead
+models/audio_emotion/
+models/facial_emotion/
+*.pt
+*.pth
+*.bin
+*.onnx
+*.safetensors
+*.pkl
+*.h5
+
+# ── HuggingFace cache ─────────────────────────────────────────────────────────
+.cache/
+~/.cache/huggingface/
+
+# ── Bot Data ──────────────────────────────────────────────────────────────────
+assets/bot_profile.json     # User-specific; not for repo
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Audio / Video Temp Files ──────────────────────────────────────────────────
+*.wav
+*.mp3
+*.mp4
+*.webm
+tmp/
+
+# ── IDE & OS ──────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/

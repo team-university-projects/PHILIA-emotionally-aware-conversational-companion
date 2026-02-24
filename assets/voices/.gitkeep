@@ -1,0 +1,2 @@
+# Place voice configuration JSON files here.
+# Format: { "name": "voice_id", "engine": "pyttsx3|elevenlabs", "params": {} }

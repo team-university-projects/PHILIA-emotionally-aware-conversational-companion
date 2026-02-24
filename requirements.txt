@@ -1,0 +1,35 @@
+# ── Core ────────────────────────────────────────
+numpy>=1.24
+opencv-python>=4.8          # Webcam frame capture + image utils
+Pillow>=10.0                # Image helpers
+
+# ── Audio ────────────────────────────────────────
+pyaudio>=0.2.13             # Push-to-talk microphone recording
+soundfile>=0.12             # WAV read/write
+librosa>=0.10               # Audio feature extraction helpers
+pyttsx3>=2.90               # Default offline TTS engine
+
+# ── Speech-to-Text ────────────────────────────────
+openai-whisper>=20231117    # Local Whisper STT
+
+# ── Emotion — Audio ───────────────────────────────
+transformers>=4.38          # Wav2Vec + text emotion models
+torch>=2.1                  # PyTorch backend
+torchaudio>=2.1
+
+# ── Emotion — Facial ──────────────────────────────
+# deepface>=0.0.89          # Alternative: DeepFace for facial emotion
+fer>=22.5                   # Facial emotion recognition (FER+)
+
+# ── Emotion — Text ───────────────────────────────
+# transformers already listed above
+# Model: j-hartmann/emotion-english-distilroberta-base (downloaded via HuggingFace)
+
+# ── LLM ──────────────────────────────────────────
+openai>=1.12                # OpenAI API client
+# google-generativeai>=0.5  # Uncomment for Gemini backend
+# ollama>=0.1               # Uncomment for local Ollama backend
+
+# ── Utilities ─────────────────────────────────────
+python-dotenv>=1.0          # Load .env for API keys
+dataclasses-json>=0.6       # Serialisable dataclasses
