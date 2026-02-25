@@ -34,8 +34,13 @@ class VideoConfig:
 
 @dataclass
 class ModelConfig:
+    # Inference device — "cpu" works out-of-the-box.
+    # To use the RTX 3060, install the CUDA 12 Toolkit from nvidia.com
+    # then change this to "cuda".
+    device: str = "cuda"
+
     # Speech-to-text
-    whisper_model: str = "base"     # tiny | base | small | medium | large
+    whisper_model: str = "distil-large-v3"  # Best accuracy/speed for accents
 
     # Audio emotion (Wav2Vec-based or CNN — swap path as needed)
     audio_emotion_model_path: str = "models/audio_emotion"

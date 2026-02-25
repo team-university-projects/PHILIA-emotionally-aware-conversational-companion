@@ -1,6 +1,11 @@
+# To activate venv
+.venv\Scripts\Activate
+
 # For Audio Capture
 python -m capture.audio_capture
 
 # For Video Capture
 python -m capture.video_capture
 
+# For Transcription
+python -m speech.transcriber tmp\recordings\recording_20260225_171934_643340.wav

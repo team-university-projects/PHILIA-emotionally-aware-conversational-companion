@@ -9,8 +9,7 @@ soundfile>=0.12             # WAV read/write
 keyboard>=0.13.5            # Push-to-talk key detection
 
 # ── Speech-to-Text ────────────────────────────────
-# Install when implementing speech/transcriber.py:
-# openai-whisper>=20231117
+faster-whisper>=1.0.0       # Faster Whisper STT (CTranslate2 backend)
 
 # ── Emotion — Audio ───────────────────────────────
 # Install when implementing emotion/audio_emotion.py:
