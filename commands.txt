@@ -1,0 +1,6 @@
+# For Audio Capture
+python -m capture.audio_capture
+
+# For Video Capture
+python -m capture.video_capture
+

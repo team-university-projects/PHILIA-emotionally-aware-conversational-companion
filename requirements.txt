@@ -1,35 +1,38 @@
 # ── Core ────────────────────────────────────────
-numpy>=1.24
+numpy==1.26.4               # Pinned — stable pre-built wheels on all platforms
 opencv-python>=4.8          # Webcam frame capture + image utils
 Pillow>=10.0                # Image helpers
 
-# ── Audio ────────────────────────────────────────
-pyaudio>=0.2.13             # Push-to-talk microphone recording
+# ── Audio Capture ────────────────────────────────
+sounddevice>=0.4.6          # Non-blocking mic recording (PortAudio backend)
 soundfile>=0.12             # WAV read/write
-librosa>=0.10               # Audio feature extraction helpers
-pyttsx3>=2.90               # Default offline TTS engine
+keyboard>=0.13.5            # Push-to-talk key detection
 
 # ── Speech-to-Text ────────────────────────────────
-openai-whisper>=20231117    # Local Whisper STT
+# Install when implementing speech/transcriber.py:
+# openai-whisper>=20231117
 
 # ── Emotion — Audio ───────────────────────────────
-transformers>=4.38          # Wav2Vec + text emotion models
-torch>=2.1                  # PyTorch backend
-torchaudio>=2.1
+# Install when implementing emotion/audio_emotion.py:
+# transformers>=4.38
+# torch>=2.1
+# torchaudio>=2.1
+# librosa>=0.10
 
 # ── Emotion — Facial ──────────────────────────────
-# deepface>=0.0.89          # Alternative: DeepFace for facial emotion
-fer>=22.5                   # Facial emotion recognition (FER+)
+# Install when implementing emotion/facial_emotion.py:
+# fer>=22.5
 
 # ── Emotion — Text ───────────────────────────────
-# transformers already listed above
-# Model: j-hartmann/emotion-english-distilroberta-base (downloaded via HuggingFace)
+# Install when implementing emotion/text_emotion.py:
+# transformers>=4.38  (already listed above)
 
 # ── LLM ──────────────────────────────────────────
-openai>=1.12                # OpenAI API client
-# google-generativeai>=0.5  # Uncomment for Gemini backend
-# ollama>=0.1               # Uncomment for local Ollama backend
+# Install when implementing llm/response_generator.py:
+# openai>=1.12
+
+# ── TTS ──────────────────────────────────────────
+pyttsx3>=2.90               # Default offline TTS engine
 
 # ── Utilities ─────────────────────────────────────
 python-dotenv>=1.0          # Load .env for API keys
-dataclasses-json>=0.6       # Serialisable dataclasses

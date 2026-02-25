@@ -71,7 +71,9 @@ def initialise() -> Components:
     llm = ResponseGenerator(config)
     tts = TextToSpeech(config, profile)
 
-    logger.info("All PHILIA modules initialised.")
+    logger.info("All PHILIA modules initialised — opening webcam...")
+    video_cap.open()   # Warm up camera once; stays open for the session
+    logger.info("PHILIA ready.")
     return (
         config, profile, interface,
         audio_cap, video_cap, asr,
@@ -97,10 +99,12 @@ def run_turn(components: Components) -> None:
         fuser, tone_map, prompt_bld, llm, tts,
     ) = components
 
-    # ── Step 1: Capture ──────────────────────────────────────────────────────
-    logger.info("Capturing audio and video...")
-    audio_bytes = audio_cap.record()          # Blocks until PTT released
-    frame = video_cap.capture_frame()         # Single representative frame
+    # ── Step 1: Capture (audio + video, duration-matched) ────────────────────
+    logger.info("Starting capture — hold SPACE to record...")
+    # audio_cap.record() generates recording_id at PTT press-time and video
+    # uses the same ID so .wav and .mp4 files share the same filename stem.
+    audio_path, recording_id = audio_cap.record()  # Blocks for PTT duration
+    video_path = video_cap.stop_recording()        # Finalise and close the MP4
 
     # ── Step 2: Transcribe ───────────────────────────────────────────────────
     logger.info("Transcribing speech...")
@@ -149,10 +153,21 @@ def main() -> None:
 
     try:
         while True:
-            interface.wait_for_ptt()   # Blocking; raises SystemExit on quit
+            # Pre-arm video: register a one-shot hook so video starts the
+            # instant the spacebar is pressed (same moment audio_cap.record()
+            # begins capturing), then call record() which will block.
+            def _on_ptt_press(_event) -> None:
+                keyboard.unhook(_on_ptt_press)
+                video_cap.start_recording(
+                    datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                )
+            keyboard.on_press_key("space", _on_ptt_press)
+
+            interface.wait_for_ptt()    # Blocking; raises SystemExit on quit
             run_turn(components)
     except (KeyboardInterrupt, SystemExit):
         logger.info("PHILIA shutting down. Goodbye.")
+        video_cap.close()
 
 
 if __name__ == "__main__":

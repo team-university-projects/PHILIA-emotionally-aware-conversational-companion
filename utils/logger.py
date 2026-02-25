@@ -13,6 +13,7 @@ import logging
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+import io
 
 _LOG_DIR = Path(__file__).parent.parent / "logs"
 _LOG_FILE = _LOG_DIR / "philia.log"
@@ -33,8 +34,12 @@ def _setup_root(level: str = "INFO") -> None:
     root = logging.getLogger()
     root.setLevel(level)
 
-    # Console handler
-    ch = logging.StreamHandler(sys.stdout)
+    # Console handler — wrap stdout in UTF-8 so Unicode chars (→, etc.)
+    # don't crash on Windows cp1252 terminals.
+    utf8_stdout = io.TextIOWrapper(
+        sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True
+    )
+    ch = logging.StreamHandler(utf8_stdout)
     ch.setFormatter(_FORMATTER)
     root.addHandler(ch)
 
