@@ -12,11 +12,11 @@ keyboard>=0.13.5            # Push-to-talk key detection
 faster-whisper>=1.0.0       # Faster Whisper STT (CTranslate2 backend)
 
 # ── Emotion — Audio ───────────────────────────────
-# Install when implementing emotion/audio_emotion.py:
-# transformers>=4.38
-# torch>=2.1
-# torchaudio>=2.1
-# librosa>=0.10
+transformers>=4.38          # Wav2Vec2 + BERT pipelines
+# torch + torchaudio: install the CUDA 12.4 wheel (not the default CPU wheel)
+# pip install torch==2.6.0+cu124 torchaudio==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124
+torch>=2.1
+torchaudio>=2.1
 
 # ── Emotion — Facial ──────────────────────────────
 # Install when implementing emotion/facial_emotion.py:

@@ -16,6 +16,7 @@ Pipeline per push-to-talk turn:
 """
 
 from __future__ import annotations
+from typing import TypeAlias
 
 from config import Config
 from bot.bot_profile import BotProfile
@@ -37,7 +38,7 @@ logger = get_logger(__name__)
 
 
 # ── Type alias for the components bundle ─────────────────────────────────────
-type Components = tuple[
+Components: TypeAlias = tuple[
     Config, BotProfile, Interface,
     AudioCapture, VideoCapture, Transcriber,
     AudioEmotionRecognizer, FacialEmotionRecognizer, TextEmotionRecognizer,
@@ -113,7 +114,7 @@ def run_turn(components: Components) -> None:
 
     # ── Step 3: Emotion Recognition (3 modalities) ───────────────────────────
     logger.info("Running emotion recognition...")
-    audio_probs = audio_emo.predict(audio_bytes)
+    audio_probs = audio_emo.predict(audio_path)
     facial_probs = facial_emo.predict(frame)
     text_probs = text_emo.predict(transcript)
 

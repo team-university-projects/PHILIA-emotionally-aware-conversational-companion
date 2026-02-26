@@ -9,3 +9,9 @@ python -m capture.video_capture
 
 # For Transcription
 python -m speech.transcriber tmp\recordings\recording_20260225_171934_643340.wav
+
+# Running Text emotion
+python -m emotion.text_emotion
+
+# Running Speech Emotion
+python -m emotion.audio_emotion tmp\recordings\recording_20260225_125911_615484.wav

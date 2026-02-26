@@ -42,14 +42,14 @@ class ModelConfig:
     # Speech-to-text
     whisper_model: str = "distil-large-v3"  # Best accuracy/speed for accents
 
-    # Audio emotion (Wav2Vec-based or CNN — swap path as needed)
-    audio_emotion_model_path: str = "models/audio_emotion"
+    # Audio emotion (Wav2Vec2 — HuggingFace model ID)
+    audio_emotion_model_name: str = "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
 
     # Facial emotion (CNN / ResNet)
     facial_emotion_model_path: str = "models/facial_emotion"
 
-    # Text emotion (Transformer)
-    text_emotion_model_name: str = "j-hartmann/emotion-english-distilroberta-base"
+    # Text emotion (GoEmotions BERT — 28 fine-grained labels)
+    text_emotion_model_name: str = "monologg/bert-base-cased-goemotions-original"
 
     # LLM
     llm_provider: str = "openai"    # openai | ollama | gemini
