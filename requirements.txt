@@ -19,8 +19,7 @@ torch>=2.1
 torchaudio>=2.1
 
 # ── Emotion — Facial ──────────────────────────────
-# Install when implementing emotion/facial_emotion.py:
-# fer>=22.5
+mediapipe>=0.10           # Face detection + landmark-based cropping
 
 # ── Emotion — Text ───────────────────────────────
 # Install when implementing emotion/text_emotion.py:

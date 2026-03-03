@@ -115,7 +115,7 @@ def run_turn(components: Components) -> None:
     # ── Step 3: Emotion Recognition (3 modalities) ───────────────────────────
     logger.info("Running emotion recognition...")
     audio_probs = audio_emo.predict(audio_path)
-    facial_probs = facial_emo.predict(frame)
+    facial_probs = facial_emo.predict(video_path)
     text_probs = text_emo.predict(transcript)
 
     # ── Step 4: Fuse Emotions ────────────────────────────────────────────────

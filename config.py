@@ -45,8 +45,8 @@ class ModelConfig:
     # Audio emotion (Wav2Vec2 — HuggingFace model ID)
     audio_emotion_model_name: str = "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
 
-    # Facial emotion (CNN / ResNet)
-    facial_emotion_model_path: str = "models/facial_emotion"
+    # Facial emotion (ViT — HuggingFace model ID)
+    facial_emotion_model_name: str = "mo-thecreator/vit-Facial-Expression-Recognition"
 
     # Text emotion (GoEmotions BERT — 28 fine-grained labels)
     text_emotion_model_name: str = "monologg/bert-base-cased-goemotions-original"
