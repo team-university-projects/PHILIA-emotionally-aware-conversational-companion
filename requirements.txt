@@ -2,6 +2,8 @@
 numpy==1.26.4               # Pinned — stable pre-built wheels on all platforms
 opencv-python>=4.8          # Webcam frame capture + image utils
 Pillow>=10.0                # Image helpers
+python-dotenv>=1.0          # Auto-loads .env into os.environ at startup
+
 
 # ── Audio Capture ────────────────────────────────
 sounddevice>=0.4.6          # Non-blocking mic recording (PortAudio backend)
@@ -26,11 +28,14 @@ mediapipe>=0.10           # Face detection + landmark-based cropping
 # transformers>=4.38  (already listed above)
 
 # ── LLM ──────────────────────────────────────────
-# Install when implementing llm/response_generator.py:
-# openai>=1.12
+openai>=1.12                # OpenAI backend (gpt-4o-mini, etc.)
+google-genai>=1.0           # Gemini backend (gemini-2.0-flash, etc.)
+# Ollama backend uses stdlib urllib — no extra package needed
 
 # ── TTS ──────────────────────────────────────────
-pyttsx3>=2.90               # Default offline TTS engine
+edge-tts>=7.0               # Microsoft Edge neural TTS via SSML (no key needed)
+# ElevenLabs (optional, premium quality):
+# elevenlabs>=1.0           # pip install elevenlabs; set ELEVENLABS_API_KEY
 
 # ── Utilities ─────────────────────────────────────
 python-dotenv>=1.0          # Load .env for API keys

@@ -18,3 +18,18 @@ python -m emotion.audio_emotion tmp\recordings\recording_20260225_125911_615484.
 
 # Running Face Emotion
 python -m emotion.facial_emotion tmp\recordings\recording_20260303_185743_512962.mp4
+
+# Running Fusion (synthetic test cases)
+python -m emotion.fusion
+
+# Running Fusion 
+# python -c "from config import Config; from emotion.audio_emotion import AudioEmotionRecognizer; from emotion.facial_emotion import FacialEmotionRecognizer; from emotion.text_emotion import TextEmotionRecognizer; from emotion.fusion import EmotionFuser; cfg=Config.load(); ar=AudioEmotionRecognizer(cfg).predict('tmp\recordings\recording_20260225_125911_615484.wav'); fr=FacialEmotionRecognizer(cfg).predict('tmp/recordings/recording_20260303_185743_512962.mp4'); tr=TextEmotionRecognizer(cfg).predict('<what you said>'); f=EmotionFuser(cfg).fuse(ar,fr,tr); print(f)"
+
+# Running LLM Response Generator
+python -m llm.response_generator
+
+# With custom text + emotion:
+python -m speech.tts "Oh, I'm so sorry to hear you had such a rough day." sad
+
+# Main 
+python main.py

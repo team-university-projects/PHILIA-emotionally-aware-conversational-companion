@@ -104,26 +104,47 @@ def _neutral_result() -> AudioEmotionResult:
 
 def _resolve_device(requested: str) -> str:
     """
-    Return ``"cuda"`` if requested and the CUDA 12 runtime is available,
-    otherwise ``"cpu"``. Mirrors the same probe used in the transcriber
-    and text emotion module.
+    Return 'cuda' only if:
+      1. 'cuda' was requested in config
+      2. CUDA 12 runtime is present (cublas)
+      3. PyTorch's cuDNN is available AND version >= 8.9
+
+    Uses torch.backends.cudnn.version() which is authoritative regardless of
+    cuDNN DLL filename changes between versions 8 and 9 on Windows.
     """
     if requested != "cuda":
         return "cpu"
 
-    dll = "cublas64_12.dll" if platform.system() == "Windows" else "libcublas.so.12"
+    # -- 1. CUDA 12 runtime ---------------------------------------------------
+    import platform as _platform
+    import ctypes as _ctypes
+    _dll = "cublas64_12.dll" if _platform.system() == "Windows" else "libcublas.so.12"
     try:
-        if platform.system() == "Windows":
-            ctypes.windll.LoadLibrary(dll)
+        if _platform.system() == "Windows":
+            _ctypes.windll.LoadLibrary(_dll)
         else:
-            ctypes.CDLL(dll)
-        return "cuda"
+            _ctypes.CDLL(_dll)
     except OSError:
+        logger.warning("CUDA 12 runtime not found -- audio emotion will run on CPU.")
+        return "cpu"
+
+    # -- 2. cuDNN >= 8.9 via PyTorch ------------------------------------------
+    import torch as _torch
+    if not _torch.backends.cudnn.is_available():
+        logger.warning("cuDNN not available in PyTorch -- audio emotion will run on CPU.")
+        return "cpu"
+
+    _ver = _torch.backends.cudnn.version()  # e.g. 90100 = cuDNN 9.1.0
+    if _ver < 8900:
         logger.warning(
-            "CUDA requested but CUDA 12 runtime not found — "
-            "audio emotion will run on CPU."
+            "cuDNN %d < 8900 -- audio emotion will run on CPU. Upgrade to cuDNN 9.x.",
+            _ver,
         )
         return "cpu"
+
+    logger.info("cuDNN %d OK -- audio emotion will use GPU.", _ver)
+    return "cuda"
+
 
 
 def _load_wav(wav_path: Path) -> tuple[np.ndarray, int]:
@@ -169,7 +190,7 @@ class AudioEmotionRecognizer:
         model_name: str = getattr(
             config.models, "audio_emotion_model_name", _MODEL_NAME
         )
-        requested_device: str = getattr(config.models, "device", "cpu")
+        requested_device: str = getattr(config.models, "emotion_device", "cpu")
         device = _resolve_device(requested_device)
 
         # transformers pipeline device: int (GPU index) or -1 (CPU)

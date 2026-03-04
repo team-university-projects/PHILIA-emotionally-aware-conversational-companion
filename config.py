@@ -34,10 +34,14 @@ class VideoConfig:
 
 @dataclass
 class ModelConfig:
-    # Inference device — "cpu" works out-of-the-box.
-    # To use the RTX 3060, install the CUDA 12 Toolkit from nvidia.com
-    # then change this to "cuda".
+    # Inference device for CTranslate2-based models (Whisper).
+    # faster-whisper uses its own CUDA kernels and does NOT need system cuDNN.
     device: str = "cuda"
+
+    # Inference device for PyTorch-based emotion models (Wav2Vec2, ViT, BERT).
+    # Requires cuDNN 9.x in PATH. main.py prepends the cuDNN 9.x bin dir
+    # automatically. Change to "cpu" if you see cuDNN-related crashes.
+    emotion_device: str = "cpu"
 
     # Speech-to-text
     whisper_model: str = "distil-large-v3"  # Best accuracy/speed for accents
@@ -52,9 +56,9 @@ class ModelConfig:
     text_emotion_model_name: str = "monologg/bert-base-cased-goemotions-original"
 
     # LLM
-    llm_provider: str = "openai"    # openai | ollama | gemini
-    llm_model: str = "gpt-4o-mini"
-    llm_api_key_env: str = "OPENAI_API_KEY"
+    llm_provider: str = "gemini"         # openai | ollama | gemini
+    llm_model: str = "gemini-2.5-flash"
+    llm_api_key_env: str = "GEMINI_API_KEY"
     llm_max_tokens: int = 512
     llm_temperature: float = 0.8
 
@@ -62,9 +66,9 @@ class ModelConfig:
 @dataclass
 class FusionConfig:
     # Weights must sum to 1.0
-    audio_weight: float = 0.35
-    facial_weight: float = 0.35
-    text_weight: float = 0.30
+    audio_weight: float = 0.30
+    facial_weight: float = 0.30
+    text_weight: float = 0.40
 
 
 @dataclass
@@ -87,7 +91,13 @@ class Config:
     @classmethod
     def load(cls) -> "Config":
         """
-        Load configuration. Currently returns defaults.
+        Load configuration. Reads .env from the project root (if present)
+        so that API keys set there are available via os.environ.
         Future: parse from config.yaml / environment variables.
         """
+        from dotenv import load_dotenv
+        from pathlib import Path
+        # Load .env from the project root (the directory containing config.py)
+        env_path = Path(__file__).parent / ".env"
+        load_dotenv(dotenv_path=env_path, override=False)
         return cls()

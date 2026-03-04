@@ -69,7 +69,10 @@ class AudioCapture:
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
-    def record(self) -> tuple[Path, str]:
+    def record(
+        self,
+        on_start=None,
+    ) -> tuple[Path, str]:
         """
         Block until the spacebar is pressed, record while it is held, then
         save the audio and return the file path and shared recording ID.
@@ -77,29 +80,46 @@ class AudioCapture:
         The recording loop:
 
         1. Wait for ``SPACE`` press (blocking).
-        2. Register a release hook *before* opening the stream so a fast
+        2. Mint the shared recording ID and call ``on_start(recording_id)``
+           if provided — intended for co-starting the video recorder from
+           the caller without registering a second conflicting key hook.
+        3. Register a release hook *before* opening the stream so a fast
            release is never missed.
-        3. Open a :class:`sounddevice.InputStream`; its callback appends
+        4. Open a :class:`sounddevice.InputStream`; its callback appends
            audio chunks to an in-memory buffer.
-        4. Wait for ``SPACE`` release (``threading.Event``).
-        5. Stop the stream and flush the buffer.
-        6. Write the buffer to a timestamped WAV file.
+        5. Wait for ``SPACE`` release (``threading.Event``).
+        6. Stop the stream and flush the buffer.
+        7. Write the buffer to a timestamped WAV file.
+
+        Args:
+            on_start: Optional callable ``(recording_id: str) -> None``
+                      called immediately after the key press is detected.
+                      Use this to co-start the video recorder with the
+                      same ID without adding a second key hook.
 
         Returns:
             Tuple of:
             - ``Path``: Absolute path to the saved ``.wav`` file.
             - ``str``: Recording ID (timestamp string) shared with the
-              video recorder for matched file naming, e.g.
-              ``"20260225_120000_000000"``.
+              video recorder for matched file naming.
 
         Raises:
             RuntimeError: If the audio device cannot be opened.
         """
         self._await_key_press()
 
-        # Generate the shared recording ID at press-time — before the audio
-        # is captured — so the video recorder can use the same ID immediately.
+        # Mint the shared recording ID immediately after key press so both
+        # audio and video files share the same filename stem.
         recording_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+        # Notify the caller (e.g. to start video recording) before we open
+        # the audio stream — keeps the two captures in sync without a second
+        # key hook competing with this one.
+        if on_start is not None:
+            try:
+                on_start(recording_id)
+            except Exception as exc:
+                logger.warning("on_start callback raised: %s", exc)
 
         audio_chunks: List[np.ndarray] = []
         stop_event = threading.Event()

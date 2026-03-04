@@ -1,26 +1,23 @@
-"""
-main.py — PHILIA Orchestration Pipeline
-
-Entry point for the PHILIA multimodal emotion-aware conversational agent.
-
-Pipeline per push-to-talk turn:
-  1.  Capture audio + webcam frame
-  2.  Transcribe audio → text
-  3.  Run three parallel emotion recognisers (audio / facial / text)
-  4.  Fuse emotion signals (confidence-weighted late fusion)
-  5.  Map fused emotion → tone descriptor + TTS prosody params
-  6.  Build emotion-conditioned LLM prompt
-  7.  Generate LLM response
-  8.  Synthesise speech with prosody
-  9.  Play response via avatar interface
-"""
 
 from __future__ import annotations
+
+import os
+import sys
 from typing import TypeAlias
+
+# ── cuDNN PATH fix ─────────────────────────────────────────────────────────────
+# Windows DLL resolution is first-come-first-served. If an older cuDNN version
+# (e.g. shipped with the CUDA Toolkit) appears in PATH before the standalone
+# cuDNN 9.x install, PyTorch picks it up and crashes with:
+#   "Could not load symbol cudnnGetLibConfig. Error code 127"
+# Prepend the cuDNN 9.x bin directory so Windows finds the correct DLL first.
+# This must happen BEFORE any module that triggers a PyTorch/CUDA import.
+_CUDNN_PATH = r"C:\Program Files\NVIDIA\CUDNN\v9.19\bin\12.3.1\x64"
+if os.path.isdir(_CUDNN_PATH) and _CUDNN_PATH not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _CUDNN_PATH + os.pathsep + os.environ.get("PATH", "")
 
 from config import Config
 from bot.bot_profile import BotProfile
-from ui.interface import Interface
 from capture.audio_capture import AudioCapture
 from capture.video_capture import VideoCapture
 from speech.transcriber import Transcriber
@@ -37,138 +34,204 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-# ── Type alias for the components bundle ─────────────────────────────────────
+# ── Component bundle type ──────────────────────────────────────────────────────
+
 Components: TypeAlias = tuple[
-    Config, BotProfile, Interface,
+    Config, BotProfile,
     AudioCapture, VideoCapture, Transcriber,
     AudioEmotionRecognizer, FacialEmotionRecognizer, TextEmotionRecognizer,
     EmotionFuser, ToneMapper, PromptBuilder, ResponseGenerator, TextToSpeech,
 ]
 
 
-# ── Initialisation ────────────────────────────────────────────────────────────
+# ── Initialisation ─────────────────────────────────────────────────────────────
+
 def initialise() -> Components:
     """
     Load config and instantiate all module singletons.
 
-    Order matters: BotProfile before Interface (profile drives avatar path),
-    Config before all models (provides paths + weights).
+    Heavy models (Whisper, Wav2Vec2, ViT, BERT) are loaded here once so
+    every subsequent turn runs at inference speed without reload overhead.
     """
-    config = Config.load()
-    profile = BotProfile.load(config)
-    interface = Interface(profile)
+    logger.info("Initialising PHILIA...")
 
+    config  = Config.load()
+    profile = BotProfile.load(config)
+
+    # ── Capture ────────────────────────────────────────────────────────────────
     audio_cap = AudioCapture(config)
     video_cap = VideoCapture(config)
+
+    # ── Speech ─────────────────────────────────────────────────────────────────
     asr = Transcriber(config)
 
-    audio_emo = AudioEmotionRecognizer(config)
+    # ── Emotion recognition (load all models upfront) ──────────────────────────
+    audio_emo  = AudioEmotionRecognizer(config)
     facial_emo = FacialEmotionRecognizer(config)
-    text_emo = TextEmotionRecognizer(config)
-    fuser = EmotionFuser(config)
+    text_emo   = TextEmotionRecognizer(config)
+    fuser      = EmotionFuser(config)
 
-    tone_map = ToneMapper(config)
+    # ── Response generation ────────────────────────────────────────────────────
+    tone_map   = ToneMapper(config)
     prompt_bld = PromptBuilder(config, profile)
-    llm = ResponseGenerator(config)
-    tts = TextToSpeech(config, profile)
+    llm        = ResponseGenerator(config)
+    tts        = TextToSpeech(config, profile)
 
-    logger.info("All PHILIA modules initialised — opening webcam...")
-    video_cap.open()   # Warm up camera once; stays open for the session
-    logger.info("PHILIA ready.")
+    # Warm up the webcam once — stays open for the whole session
+    logger.info("Opening webcam...")
+    video_cap.open()
+
+    logger.info(
+        "All modules ready. %s is online. Press SPACE to speak, Ctrl+C to quit.",
+        profile.name,
+    )
     return (
-        config, profile, interface,
+        config, profile,
         audio_cap, video_cap, asr,
         audio_emo, facial_emo, text_emo,
         fuser, tone_map, prompt_bld, llm, tts,
     )
 
 
-# ── Single Conversation Turn ───────────────────────────────────────────────────
+# ── Single conversation turn ───────────────────────────────────────────────────
+
 def run_turn(components: Components) -> None:
     """
     Execute one full push-to-talk conversation turn.
 
-    All heavy inference is sequential within this function but completely
-    decoupled from other turns. Parallelism within the emotion recognition
-    step (audio / facial / text) can be added here with threading/asyncio
-    without changing any module contracts.
+    Returns normally on success. Raises exceptions only for unrecoverable
+    hardware failures (camera lost, audio device gone). All soft errors
+    (empty transcript, no face detected, LLM timeout) are handled gracefully
+    with logged warnings and sensible fallbacks.
     """
     (
-        config, profile, interface,
+        config, profile,
         audio_cap, video_cap, asr,
         audio_emo, facial_emo, text_emo,
         fuser, tone_map, prompt_bld, llm, tts,
     ) = components
 
-    # ── Step 1: Capture (audio + video, duration-matched) ────────────────────
-    logger.info("Starting capture — hold SPACE to record...")
-    # audio_cap.record() generates recording_id at PTT press-time and video
-    # uses the same ID so .wav and .mp4 files share the same filename stem.
-    audio_path, recording_id = audio_cap.record()  # Blocks for PTT duration
-    video_path = video_cap.stop_recording()        # Finalise and close the MP4
+    # ── Step 1: Capture audio + video simultaneously ───────────────────────────
+    # Pass an on_start callback into record() so the video writer starts at
+    # the exact moment the spacebar is detected — using a single key hook
+    # (inside AudioCapture) avoids the KeyError from two competing hooks.
+    print("\n[PHILIA]  Hold SPACE to speak...")
+    audio_path, recording_id = audio_cap.record(
+        on_start=lambda rec_id: video_cap.start_recording(rec_id)
+    )
+    video_path = video_cap.stop_recording()         # Finalise the MP4
 
-    # ── Step 2: Transcribe ───────────────────────────────────────────────────
+    logger.info(
+        "Captured: audio=%s  video=%s",
+        audio_path.name if audio_path else "None",
+        video_path.name if video_path else "None",
+    )
+
+    # ── Step 2: Transcribe speech ──────────────────────────────────────────────
     logger.info("Transcribing speech...")
-    transcript = asr.transcribe(audio_bytes)
-    logger.debug("Transcript: %s", transcript)
+    transcript = asr.transcribe(audio_path)
+    logger.info("Transcript: %r", transcript)
 
-    # ── Step 3: Emotion Recognition (3 modalities) ───────────────────────────
+    if not transcript or not transcript.strip():
+        logger.warning("Empty transcript — skipping turn.")
+        return
+
+    # ── Step 3: Detect emotions (text + audio + face) ─────────────────────────
     logger.info("Running emotion recognition...")
-    audio_probs = audio_emo.predict(audio_path)
-    facial_probs = facial_emo.predict(video_path)
-    text_probs = text_emo.predict(transcript)
 
-    # ── Step 4: Fuse Emotions ────────────────────────────────────────────────
+    text_result   = text_emo.predict(transcript)
+    audio_result  = audio_emo.predict(audio_path)
+    facial_result = facial_emo.predict(video_path) if video_path else _no_face_result()
+
+    logger.info(
+        "Emotions raw  text=%s(%.0f%%)  audio=%s(%.0f%%)  face=%s(%.0f%%)",
+        text_result.emotion,   text_result.confidence   * 100,
+        audio_result.emotion,  audio_result.confidence  * 100,
+        facial_result.emotion, facial_result.confidence * 100,
+    )
+
+    # ── Step 4: Fuse emotions ──────────────────────────────────────────────────
     logger.info("Fusing emotion signals...")
-    fused = fuser.fuse(audio_probs, facial_probs, text_probs)
-    logger.info("Fused emotion: %s (%.0f%% confidence)", fused.label, fused.confidence * 100)
+    fused = fuser.fuse(audio_result, facial_result, text_result)
+    logger.info(
+        "Fused emotion: %s (%.0f%%) | weights used: %s",
+        fused.label,
+        fused.confidence * 100,
+        {k: f"{v:.0%}" for k, v in fused.weights_used.items()},
+    )
 
-    # ── Step 5: Tone Mapping ─────────────────────────────────────────────────
+    # ── Step 5: Map emotion to tone + TTS params ───────────────────────────────
     tone, tts_params = tone_map.map(fused)
-    logger.debug("Tone: %s | TTS params: %s", tone, tts_params)
+    logger.debug("Tone: %s  |  TTS: rate=%dwpm pitch=x%.2f", tone, tts_params.rate, tts_params.pitch)
 
-    # ── Step 6: Build LLM Prompt ─────────────────────────────────────────────
+    # ── Step 6: Build LLM prompt ───────────────────────────────────────────────
     prompt = prompt_bld.build(transcript, fused, tone)
 
-    # ── Step 7: Generate LLM Response ────────────────────────────────────────
-    logger.info("Generating LLM response...")
-    response_text = llm.generate(prompt)
-    logger.debug("Response: %s", response_text)
+    # ── Step 7: Generate response ──────────────────────────────────────────────
+    logger.info("Generating response...")
+    try:
+        response_text = llm.generate(prompt)
+    except RuntimeError as exc:
+        logger.error("LLM failed: %s — using fallback response.", exc)
+        response_text = "I'm here for you. Could you tell me more?"
 
-    # ── Step 8: Text-to-Speech ───────────────────────────────────────────────
-    logger.info("Synthesising speech...")
-    audio_response = tts.synthesise(response_text, tts_params)
+    logger.info("[%s] %s", profile.name, response_text)
+    print(f"\n[{profile.name}]  {response_text}\n")
 
-    # ── Step 9: Avatar + Playback ────────────────────────────────────────────
-    interface.play_response(audio_response, response_text)
+    # ── Step 8: Synthesise and play speech ─────────────────────────────────────
+    logger.info("Synthesising and playing response...")
+    try:
+        tts.synthesise(response_text, tts_params)
+    except Exception as exc:
+        logger.error("TTS failed: %s — response printed to terminal only.", exc)
 
 
-# ── Main Loop ─────────────────────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _no_face_result():
+    """Return a neutral facial result when video capture is unavailable."""
+    from emotion.facial_emotion import FacialEmotionResult, FACIAL_EMOTION_LABELS
+    scores = {lbl: 0.0 for lbl in FACIAL_EMOTION_LABELS}
+    scores["neutral"] = 1.0
+    return FacialEmotionResult(
+        emotion="neutral", confidence=1.0,
+        all_scores=scores, is_no_face=True,
+    )
+
+
+# ── Main loop ──────────────────────────────────────────────────────────────────
+
 def main() -> None:
-    """Application entry point. Runs the push-to-talk conversation loop."""
-    logger.info("Starting PHILIA...")
+    """Application entry point. Runs the push-to-talk loop until Ctrl+C."""
     components = initialise()
-    _, _, interface, *_ = components
+    _, _, _, video_cap, *_ = components
 
-    logger.info("PHILIA is ready. Press PTT to speak. Ctrl+C to quit.")
+    print()
+    print("=" * 55)
+    print("  PHILIA — Emotionally Aware Conversational Companion")
+    print("  Hold SPACE to speak  |  Ctrl+C to quit")
+    print("=" * 55)
 
+    turn_number = 0
     try:
         while True:
-            # Pre-arm video: register a one-shot hook so video starts the
-            # instant the spacebar is pressed (same moment audio_cap.record()
-            # begins capturing), then call record() which will block.
-            def _on_ptt_press(_event) -> None:
-                keyboard.unhook(_on_ptt_press)
-                video_cap.start_recording(
-                    datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                )
-            keyboard.on_press_key("space", _on_ptt_press)
+            turn_number += 1
+            logger.debug("--- Turn %d ---", turn_number)
+            try:
+                run_turn(components)
+            except KeyboardInterrupt:
+                raise   # Propagate to outer handler
+            except Exception as exc:
+                # Per-turn error: log and offer to continue
+                logger.error("Turn %d failed: %s", turn_number, exc, exc_info=True)
+                print(f"\n[PHILIA]  An error occurred: {exc}")
+                print("[PHILIA]  Press SPACE to try again, or Ctrl+C to quit.\n")
 
-            interface.wait_for_ptt()    # Blocking; raises SystemExit on quit
-            run_turn(components)
     except (KeyboardInterrupt, SystemExit):
-        logger.info("PHILIA shutting down. Goodbye.")
+        print("\n\n[PHILIA]  Goodbye.\n")
+        logger.info("PHILIA shutting down after %d turn(s).", turn_number)
         video_cap.close()
+        sys.exit(0)
 
 
 if __name__ == "__main__":
