@@ -5,16 +5,17 @@ import os
 import sys
 from typing import TypeAlias
 
-# ── cuDNN PATH fix ─────────────────────────────────────────────────────────────
-# Windows DLL resolution is first-come-first-served. If an older cuDNN version
-# (e.g. shipped with the CUDA Toolkit) appears in PATH before the standalone
-# cuDNN 9.x install, PyTorch picks it up and crashes with:
-#   "Could not load symbol cudnnGetLibConfig. Error code 127"
-# Prepend the cuDNN 9.x bin directory so Windows finds the correct DLL first.
-# This must happen BEFORE any module that triggers a PyTorch/CUDA import.
-_CUDNN_PATH = r"C:\Program Files\NVIDIA\CUDNN\v9.19\bin\12.3.1\x64"
-if os.path.isdir(_CUDNN_PATH) and _CUDNN_PATH not in os.environ.get("PATH", ""):
-    os.environ["PATH"] = _CUDNN_PATH + os.pathsep + os.environ.get("PATH", "")
+# ── PyTorch CUDA DLL registration ─────────────────────────────────────────────
+# On Windows, add torch/lib to the process DLL search path so PyTorch's
+# bundled CUDA/cuDNN libs are found before any system-installed versions.
+import pathlib as _pathlib
+for _sp in sys.path:
+    _torch_lib = _pathlib.Path(_sp) / "torch" / "lib"
+    if _torch_lib.is_dir():
+        if hasattr(os, "add_dll_directory"):
+            os.add_dll_directory(str(_torch_lib))
+        break
+del _pathlib, _sp, _torch_lib
 
 from config import Config
 from bot.bot_profile import BotProfile

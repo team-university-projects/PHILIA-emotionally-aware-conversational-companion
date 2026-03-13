@@ -35,12 +35,13 @@ class VideoConfig:
 @dataclass
 class ModelConfig:
     # Inference device for CTranslate2-based models (Whisper).
-    # faster-whisper uses its own CUDA kernels and does NOT need system cuDNN.
+    # faster-whisper has its own CUDA kernels — no system cuDNN needed.
     device: str = "cuda"
 
     # Inference device for PyTorch-based emotion models (Wav2Vec2, ViT, BERT).
-    # Requires cuDNN 9.x in PATH. main.py prepends the cuDNN 9.x bin dir
-    # automatically. Change to "cpu" if you see cuDNN-related crashes.
+    # Set to "cuda" only if cuDNN 9.x is properly installed system-wide.
+    # If you see "Could not load symbol cudnnGetLibConfig" crashes, keep as "cpu".
+    # CPU inference is slower (~3s/clip) but completely stable.
     emotion_device: str = "cpu"
 
     # Speech-to-text
@@ -87,6 +88,11 @@ class Config:
     fusion: FusionConfig = field(default_factory=FusionConfig)
     tts: TTSConfig = field(default_factory=TTSConfig)
     log_level: str = "INFO"
+
+    # ── Evaluation ─────────────────────────────────────────────────────────────
+    # Directory (relative to project root) where benchmark JSON + PNG outputs land.
+    # Each run appends a new timestamped file — old results are never overwritten.
+    eval_results_dir: str = "eval_results"
 
     @classmethod
     def load(cls) -> "Config":

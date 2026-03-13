@@ -14,7 +14,6 @@ from emotion.fusion import FusedEmotion
 from speech.tts import TTSParams
 
 
-# Tone mapping table: emotion label → (tone descriptor, pitch, rate, style)
 _TONE_MAP: dict[str, tuple[str, float, int, str]] = {
     #           tone         pitch  rate  style
     "angry":   ("firm",      0.95,  160,  "assertive"),

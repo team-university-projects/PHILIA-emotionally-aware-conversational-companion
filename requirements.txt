@@ -39,3 +39,8 @@ edge-tts>=7.0               # Microsoft Edge neural TTS via SSML (no key needed)
 
 # ── Utilities ─────────────────────────────────────
 python-dotenv>=1.0          # Load .env for API keys
+
+# ── Evaluation ─────────────────────────────────────────────────────────────
+scikit-learn>=1.4           # Metrics: accuracy, F1, confusion matrix
+matplotlib>=3.8             # Confusion matrix PNG generation
+datasets>=2.18              # HuggingFace dataset streaming (RAVDESS, GoEmotions, FER2013)
