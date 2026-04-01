@@ -104,9 +104,14 @@ _GOEMOTIONS_TO_CANONICAL: dict[str, str] = {
 }
 
 
-# ── FER2013 → canonical ──────────────────────────────────────────────────────
+# ── FER2013 / ViT model → canonical ─────────────────────────────────────────
+# The mo-thecreator/vit-Facial-Expression-Recognition model outputs 5 labels:
+#   anger, happy, neutral, sad, surprise
+# It does NOT output disgust or fear — those are model capability gaps.
+# Note: model uses 'anger' (not 'angry') — both variants mapped here.
 _FER_TO_CANONICAL: dict[str, str] = {
     "angry":    "angry",
+    "anger":    "angry",   # ViT model uses 'anger', not 'angry'
     "disgust":  "disgust",
     "fear":     "fear",
     "happy":    "happy",

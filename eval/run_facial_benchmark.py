@@ -101,8 +101,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def _map_to_canonical(label: str) -> str:
-    """Map the model's FER label back to the canonical 7-label space."""
-    return _FER_TO_CANONICAL.get(label.lower(), "neutral")
+    """Map the model's FER label back to the canonical 7-label space.
+    Falls back to the lowercased label itself (not neutral) so unknown
+    labels surface as wrong predictions rather than inflating neutral's score.
+    """
+    return _FER_TO_CANONICAL.get(label.lower(), label.lower())
 
 
 def main() -> None:

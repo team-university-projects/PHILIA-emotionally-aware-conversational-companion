@@ -100,7 +100,10 @@ def save_confusion_matrix(
     ax.tick_params(which="minor", bottom=False, left=False)
 
     if title:
-        ax.set_title(title, color=_TEXT_COLOUR, fontsize=13, pad=14, fontweight="bold")
+        # Split on ' | ' so fusion model names render one-per-line
+        display_title = title.replace(" | ", "\n")
+        ax.set_title(display_title, color=_TEXT_COLOUR, fontsize=11, pad=14,
+                     fontweight="bold", linespacing=1.6)
 
     # ── Save ──────────────────────────────────────────────────────────────────
     plt.tight_layout()
