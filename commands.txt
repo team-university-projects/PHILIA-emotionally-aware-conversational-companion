@@ -33,3 +33,10 @@ python -m speech.tts "Oh, I'm so sorry to hear you had such a rough day." sad
 
 # Main 
 python main.py
+
+
+.venv\Scripts\python.exe -m eval.run_audio_benchmark
+.venv\Scripts\python.exe -m eval.run_text_benchmark
+.venv\Scripts\python.exe -m eval.run_facial_benchmark
+
+.venv\Scripts\python.exe -m eval.run_fusion_benchmark --dataset meld-synthetic

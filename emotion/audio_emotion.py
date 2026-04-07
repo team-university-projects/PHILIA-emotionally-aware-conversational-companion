@@ -53,11 +53,10 @@ _TARGET_SAMPLE_RATE = 16_000
 # Clips shorter than this are treated as silence / noise.
 _MIN_AUDIO_SECONDS = 0.5
 
-# Canonical 7-label emotion set (RAVDESS labels used by this model).
-# Must stay in sync with EMOTION_LABELS in fusion.py and the model's id2label.
+# Canonical 7-label emotion set used throughout PHILIA.
+# Must stay in sync with EMOTION_LABELS in fusion.py.
 EMOTION_LABELS: tuple[str, ...] = (
     "angry",
-    "calm",
     "disgust",
     "fear",
     "happy",
@@ -65,6 +64,19 @@ EMOTION_LABELS: tuple[str, ...] = (
     "sad",
     "surprise",
 )
+
+# Normalise variant label spellings from different HuggingFace models
+# into the canonical PHILIA set.
+# e.g. ehcalabres uses 'fearful', 'surprised', 'calm' instead of
+#      'fear', 'surprise', 'neutral'.
+_LABEL_NORM: dict[str, str] = {
+    "fearful":   "fear",
+    "surprised": "surprise",
+    "calm":      "neutral",   # RAVDESS 'calm' → closest canonical
+    "anger":     "angry",
+    "sadness":   "sad",
+    "joy":       "happy",
+}
 
 
 @dataclass
@@ -258,16 +270,24 @@ class AudioEmotionRecognizer:
             {"raw": audio, "sampling_rate": _TARGET_SAMPLE_RATE}
         )
 
-        # Build score dict and find top prediction
+        # Normalise labels → canonical PHILIA set, merging scores if needed
+        merged: Dict[str, float] = {}
+        for item in raw:
+            canonical = _LABEL_NORM.get(item["label"], item["label"])
+            score = round(float(item["score"]), 4)
+            # If two model labels map to the same canonical label, sum them
+            merged[canonical] = merged.get(canonical, 0.0) + score
+
+        # Ensure all canonical labels are present (zero-fill missing)
         all_scores: Dict[str, float] = {
-            item["label"]: round(float(item["score"]), 4)
-            for item in raw
+            label: round(merged.get(label, 0.0), 4)
+            for label in EMOTION_LABELS
         }
-        top = max(raw, key=lambda x: x["score"])
+        top_label = max(all_scores, key=lambda k: all_scores[k])
 
         result = AudioEmotionResult(
-            emotion=top["label"],
-            confidence=round(float(top["score"]), 4),
+            emotion=top_label,
+            confidence=round(all_scores[top_label], 4),
             all_scores=all_scores,
         )
 
@@ -275,20 +295,20 @@ class AudioEmotionRecognizer:
             "Audio emotion: %s (%.1f%%) | runner-up: %s (%.1f%%)",
             result.emotion,
             result.confidence * 100,
-            *_runner_up(raw, top["label"]),
+            *_runner_up_from_scores(all_scores, top_label),
         )
         return result
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _runner_up(label_scores: list[dict], top_label: str) -> tuple[str, float]:
-    """Return the second-highest scoring label and its percentage."""
-    others = [s for s in label_scores if s["label"] != top_label]
+def _runner_up_from_scores(scores: Dict[str, float], top_label: str) -> tuple[str, float]:
+    """Return the second-highest canonical label and its percentage."""
+    others = {k: v for k, v in scores.items() if k != top_label}
     if not others:
         return "—", 0.0
-    second = max(others, key=lambda x: x["score"])
-    return second["label"], second["score"] * 100
+    second = max(others, key=lambda k: others[k])
+    return second, others[second] * 100
 
 
 # ── Standalone test ────────────────────────────────────────────────────────────

@@ -48,13 +48,19 @@ class ModelConfig:
     whisper_model: str = "distil-large-v3"  # Best accuracy/speed for accents
 
     # Audio emotion (Wav2Vec2 — HuggingFace model ID)
+    # Options (swap as needed):
+    #   "models/fine_tuned/audio_emotion"                           <- MELD fine-tuned (use for MELD eval)
+    #   "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition" <- pretrained, trained on RAVDESS
+    # audio_emotion_model_name: str = "models/fine_tuned/audio_emotion"
     audio_emotion_model_name: str = "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
 
     # Facial emotion (ViT — HuggingFace model ID)
+    # facial_emotion_model_name: str = "mo-thecreator/vit-Facial-Expression-Recognition"
     facial_emotion_model_name: str = "mo-thecreator/vit-Facial-Expression-Recognition"
 
     # Text emotion (GoEmotions BERT — 28 fine-grained labels)
     text_emotion_model_name: str = "monologg/bert-base-cased-goemotions-original"
+    # text_emotion_model_name: str = "models/fine_tuned/text_emotion"
 
     # LLM
     llm_provider: str = "gemini"         # openai | ollama | gemini
@@ -67,9 +73,9 @@ class ModelConfig:
 @dataclass
 class FusionConfig:
     # Weights must sum to 1.0
-    audio_weight: float = 0.30
-    facial_weight: float = 0.30
-    text_weight: float = 0.40
+    audio_weight: float = 0.15
+    facial_weight: float = 0.60
+    text_weight: float = 0.25
 
 
 @dataclass

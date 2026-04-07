@@ -146,6 +146,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Fusion benchmark on synthetic multimodal samples."
     )
+    p.add_argument("--dataset", choices=["synthetic", "meld-synthetic"], default="meld-synthetic",
+                   help="Which dataset to evaluate on. 'meld-synthetic' uses aligned MELD audio+text and synthetic FER2013 images.")
     p.add_argument("--max-samples", type=int, default=None,
                    help="Limit the number of fusion samples (default: all).")
     p.add_argument("--max-per-modality", type=int, default=300,
@@ -162,23 +164,37 @@ def main() -> None:
     args  = parse_args()
     config = Config.load()
 
-    # ── Load per-modality datasets ────────────────────────────────────────────
-    print("\nLoading RAVDESS (audio)...")
-    audio_samples = RAVDESSLoader().load(max_samples=args.max_per_modality)
+    # ── Load dataset ─────────────────────────────────────────────────────────
+    if args.dataset == "meld-synthetic":
+        from eval.dataset_loader import MELDFusionLoader
+        loader = MELDFusionLoader()
+        raw_samples = loader.load(max_samples=args.max_samples)
+        if not raw_samples:
+             print("[ERROR] No MELDFusion samples loaded. Check dataset loaders.")
+             sys.exit(1)
+        fusion_inputs = [
+            _FusionInput(audio_path=w, text=t, image=i, true_label=lbl)
+            for w, t, i, lbl in raw_samples
+        ]
+        dataset_name = "MELD-Synthetic (Aligned Audio+Text, Synthetic FER Image)"
+    else:
+        print("\nLoading RAVDESS (audio)...")
+        audio_samples = RAVDESSLoader().load(max_samples=args.max_per_modality)
 
-    print("Loading GoEmotions (text)...")
-    text_samples  = GoEmotionsLoader().load(max_samples=args.max_per_modality)
+        print("Loading GoEmotions (text)...")
+        text_samples  = GoEmotionsLoader().load(max_samples=args.max_per_modality)
 
-    print("Loading FER2013 (facial)...")
-    image_samples = FER2013Loader().load(max_samples=args.max_per_modality)
+        print("Loading FER2013 (facial)...")
+        image_samples = FER2013Loader().load(max_samples=args.max_per_modality)
 
-    fusion_inputs = _build_synthetic_samples(
-        audio_samples, text_samples, image_samples, args.max_samples
-    )
+        fusion_inputs = _build_synthetic_samples(
+            audio_samples, text_samples, image_samples, args.max_samples
+        )
 
-    if not fusion_inputs:
-        print("[ERROR] No fusion samples could be constructed. Check dataset loaders.")
-        sys.exit(1)
+        if not fusion_inputs:
+            print("[ERROR] No fusion samples could be constructed. Check dataset loaders.")
+            sys.exit(1)
+        dataset_name = "Synthetic (RAVDESS + GoEmotions + FER2013)"
 
     # ── Load all models ───────────────────────────────────────────────────────
     print(f"\nLoading AudioEmotionRecognizer ({config.models.audio_emotion_model_name})...")
@@ -214,15 +230,15 @@ def main() -> None:
             f"text={config.models.text_emotion_model_name} | "
             f"facial={config.models.facial_emotion_model_name}"
         ),
-        dataset_name   = "synthetic (RAVDESS+GoEmotions+FER2013)",
+        dataset_name   = dataset_name,
         result_to_label= lambda r: r.label,
     )
 
     runner.print_summary(result)
     json_path, png_path = runner.save(result)
 
-    print(f"  Results  → {json_path}")
-    print(f"  CM plot  → {png_path}\n")
+    print(f"  Results  -> {json_path}")
+    print(f"  CM plot  -> {png_path}\n")
 
 
 if __name__ == "__main__":

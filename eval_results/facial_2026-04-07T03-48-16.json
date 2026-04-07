@@ -2,7 +2,7 @@
   "modality": "facial",
   "model_name": "mo-thecreator/vit-Facial-Expression-Recognition",
   "dataset_name": "3una/Fer2013",
-  "timestamp": "2026-03-25T06:43:01.686665+00:00",
+  "timestamp": "2026-04-07T03:48:16.414520+00:00",
   "n_samples": 700,
   "metrics": {
     "accuracy": 0.9086,
@@ -57,8 +57,8 @@
     "n_samples": 700,
     "n_correct": 636
   },
-  "latency_ms_mean": 441.94,
-  "latency_ms_p95": 617.3,
+  "latency_ms_mean": 286.96,
+  "latency_ms_p95": 562.81,
   "y_true": [
     "neutral",
     "sad",

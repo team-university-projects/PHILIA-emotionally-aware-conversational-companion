@@ -1,13 +1,13 @@
 """
-run_audio_benchmark.py — Benchmark AudioEmotionRecognizer on RAVDESS.
+run_audio_benchmark.py — Benchmark AudioEmotionRecognizer on RAVDESS or MELD.
 
 Usage:
-    python -m eval.run_audio_benchmark
-    python -m eval.run_audio_benchmark --max-samples 50
+    python -m eval.run_audio_benchmark                  # evaluates on MELD test split (default)
+    python -m eval.run_audio_benchmark --dataset ravdess
+    python -m eval.run_audio_benchmark --max-samples 200
     python -m eval.run_audio_benchmark --results-dir path/to/results
 
-The script loads the RAVDESS test split (or 10% of train if no test split
-is available), runs each WAV clip through AudioEmotionRecognizer, and saves:
+Saves:
   - eval_results/audio_<timestamp>.json   (metrics + per-class breakdown)
   - eval_results/audio_<timestamp>_cm.png (normalised confusion matrix)
 """
@@ -37,7 +37,7 @@ del _pathlib, _sp, _torch_lib
 from config import Config
 from emotion.audio_emotion import AudioEmotionRecognizer
 from eval.benchmark_runner import BenchmarkRunner
-from eval.dataset_loader import RAVDESSLoader, _RAVDESS_STR_TO_CANONICAL
+from eval.dataset_loader import RAVDESSLoader, MELDLoader, _RAVDESS_STR_TO_CANONICAL
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -45,7 +45,11 @@ logger = get_logger(__name__)
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Benchmark AudioEmotionRecognizer on RAVDESS."
+        description="Benchmark AudioEmotionRecognizer on RAVDESS or MELD."
+    )
+    p.add_argument(
+        "--dataset", choices=["ravdess", "meld"], default="meld",
+        help="Which dataset to evaluate on (default: meld).",
     )
     p.add_argument(
         "--max-samples", type=int, default=None,
@@ -67,11 +71,21 @@ def main() -> None:
     config = Config.load()
 
     # ── Load dataset ─────────────────────────────────────────────────────────
-    loader = RAVDESSLoader()
+    if args.dataset == "meld":
+        loader = MELDLoader()
+        dataset_name = MELDLoader.DATASET_NAME
+        # MELD labels are already canonical — pass emotion directly
+        result_to_label = lambda r: r.emotion
+    else:
+        loader = RAVDESSLoader()
+        dataset_name = RAVDESSLoader.DATASET_NAME
+        # RAVDESS models may output 'calm', 'fearful', 'surprised' — normalise
+        result_to_label = lambda r: _RAVDESS_STR_TO_CANONICAL.get(r.emotion, r.emotion)
+
     samples = loader.load(max_samples=args.max_samples)
 
     if not samples:
-        print("[ERROR] No RAVDESS samples loaded. Check your internet connection.")
+        print(f"[ERROR] No {args.dataset.upper()} samples loaded.")
         sys.exit(1)
 
     # ── Load model ────────────────────────────────────────────────────────────
@@ -85,18 +99,16 @@ def main() -> None:
         predictor_fn   = recognizer.predict,
         modality       = "audio",
         model_name     = config.models.audio_emotion_model_name,
-        dataset_name   = RAVDESSLoader.DATASET_NAME,
-        # The RAVDESS model may output "calm" — collapse to canonical 7-label
-        # space (calm -> neutral) to match y_true from the loader.
-        result_to_label= lambda r: _RAVDESS_STR_TO_CANONICAL.get(r.emotion, r.emotion),
+        dataset_name   = dataset_name,
+        result_to_label= result_to_label,
     )
 
     # ── Print + save ──────────────────────────────────────────────────────────
     runner.print_summary(result)
     json_path, png_path = runner.save(result)
 
-    print(f"  Results  → {json_path}")
-    print(f"  CM plot  → {png_path}\n")
+    print(f"  Results  -> {json_path}")
+    print(f"  CM plot  -> {png_path}\n")
 
 
 if __name__ == "__main__":

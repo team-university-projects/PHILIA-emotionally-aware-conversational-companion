@@ -10,6 +10,8 @@ All labels are collapsed to the 7-label canonical set used by fusion.py:
 Loaders
 -------
 RAVDESSLoader    — zenodo:ravdess (direct download) → (wav_path: Path, label: str)
+MELDLoader       — local MELD.Raw test split + MELD_audio WAVs
+                 → (wav_path: Path, label: str)
 GoEmotionsLoader — google-research-datasets/go_emotions (HF)
                  → (text: str, label: str)
 FER2013Loader    — 3una/Fer2013 (HF)
@@ -250,6 +252,229 @@ class RAVDESSLoader:
         logger.info(
             "RAVDESS (Zenodo): %d samples loaded (n_actors<=%d).",
             len(samples), self._n_actors,
+        )
+        return samples
+
+
+# ── MELD Loader (Audio + Text) ────────────────────────────────────────────────
+
+_MELD_TO_CANONICAL: dict[str, str] = {
+    "anger":    "angry",
+    "angry":    "angry",
+    "disgust":  "disgust",
+    "fear":     "fear",
+    "joy":      "happy",
+    "happy":    "happy",
+    "neutral":  "neutral",
+    "sadness":  "sad",
+    "sad":      "sad",
+    "surprise": "surprise",
+}
+
+
+class MELDLoader:
+
+    """
+    Loads the MELD test split from the locally extracted dataset.
+
+    Reads ``test_sent_emo.csv`` from ``D:/Models for PHILIA/MELD.Raw/``
+    and matches each utterance to its pre-extracted WAV file in
+    ``D:/Models for PHILIA/MELD_audio/``.
+
+    WAV files are named: ``dia{Dialogue_ID}_utt{Utterance_ID}.wav``
+    (produced by the fine-tuning Cell 4 extraction step).
+
+    Returns:
+        List of ``(wav_path: Path, canonical_label: str)`` tuples.
+    """
+
+    DATASET_NAME = "local:meld_test"
+
+    _MELD_RAW   = Path(r"D:/Models for PHILIA/MELD.Raw")
+    _MELD_AUDIO = Path(r"D:/Models for PHILIA/MELD_audio")
+
+    def load(
+        self, max_samples: int | None = None
+    ) -> list[tuple[Path, str]]:
+        import csv, random as _rnd
+
+        csv_path = self._MELD_RAW / "test_sent_emo.csv"
+        if not csv_path.exists():
+            logger.error("MELD test CSV not found: %s", csv_path)
+            return []
+
+        if not self._MELD_AUDIO.exists():
+            logger.error("MELD audio dir not found: %s", self._MELD_AUDIO)
+            return []
+
+        samples: list[tuple[Path, str]] = []
+        skipped = 0
+
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    dia_id = int(row["Dialogue_ID"])
+                    utt_id = int(row["Utterance_ID"])
+                except (KeyError, ValueError):
+                    skipped += 1
+                    continue
+
+                emotion_raw = row.get("Emotion", "").strip().lower()
+                canonical = _MELD_TO_CANONICAL.get(emotion_raw)
+                if canonical is None:
+                    skipped += 1
+                    continue
+
+                wav_path = self._MELD_AUDIO / f"dia{dia_id}_utt{utt_id}.wav"
+                if not wav_path.exists():
+                    skipped += 1
+                    continue
+
+                samples.append((wav_path, canonical))
+
+        _rnd.seed(42)
+        _rnd.shuffle(samples)
+
+        if max_samples is not None:
+            samples = samples[:max_samples]
+
+        logger.info(
+            "MELD test split: %d samples loaded, %d skipped (missing WAV or unknown label).",
+            len(samples), skipped,
+        )
+        return samples
+
+
+class MELDTextLoader:
+    """
+    Loads the MELD test split transcripts to evaluate text emotion models.
+
+    Reads ``test_sent_emo.csv`` from ``D:/Models for PHILIA/MELD.Raw/``
+    and extracts the 'Utterance' string.
+
+    Returns:
+        List of ``(text: str, canonical_label: str)`` tuples.
+    """
+
+    DATASET_NAME = "local:meld_text_test"
+
+    _MELD_RAW   = Path(r"D:/Models for PHILIA/MELD.Raw")
+
+    def load(
+        self, max_samples: int | None = None
+    ) -> list[tuple[str, str]]:
+        import csv, random as _rnd
+
+        csv_path = self._MELD_RAW / "test_sent_emo.csv"
+        if not csv_path.exists():
+            logger.error("MELD test CSV not found: %s", csv_path)
+            return []
+
+        samples: list[tuple[str, str]] = []
+        skipped = 0
+
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                emotion_raw = row.get("Emotion", "").strip().lower()
+                canonical = _MELD_TO_CANONICAL.get(emotion_raw)
+                if canonical is None:
+                    skipped += 1
+                    continue
+
+                text = row.get("Utterance", "").strip()
+                if not text:
+                    skipped += 1
+                    continue
+
+                samples.append((text, canonical))
+
+        _rnd.seed(42)
+        _rnd.shuffle(samples)
+
+        if max_samples is not None:
+            samples = samples[:max_samples]
+
+        logger.info(
+            "MELD text test split: %d samples loaded, %d skipped (empty utterance or unknown label).",
+            len(samples), skipped,
+        )
+        return samples
+
+
+class MELDFusionLoader:
+    """
+    Constructs multimodal fusion eval samples using MELD.
+    
+    Since MELD provides perfectly aligned Audio (WAV) + Text (transcript),
+    we use those as the true sample. Because we don't have MELD face
+    crops extracted natively, we pull a label-matched PIL Image from
+    FER2013 to represent the facial modality.
+    """
+
+    DATASET_NAME = "local:meld_fusion_test"
+
+    _MELD_RAW   = Path(r"D:/Models for PHILIA/MELD.Raw")
+    _MELD_AUDIO = Path(r"D:/Models for PHILIA/MELD_audio")
+
+    def load(
+        self, max_samples: int | None = None
+    ) -> list[tuple[Path, str, Image.Image, str]]:
+        import csv, random as _rnd
+        from collections import defaultdict
+
+        csv_path = self._MELD_RAW / "test_sent_emo.csv"
+        if not csv_path.exists():
+            return []
+
+        # 1. Load FER2013 images mapped by label
+        fer_samples = FER2013Loader().load(max_samples=2000)
+        fer_by_label: dict[str, list[Image.Image]] = defaultdict(list)
+        for img, lbl in fer_samples:
+            fer_by_label[lbl].append(img)
+            
+        # Shuffle fer lists so we pop randomly
+        for lbl in fer_by_label:
+            _rnd.seed(42)
+            _rnd.shuffle(fer_by_label[lbl])
+
+        samples: list[tuple[Path, str, Image.Image, str]] = []
+        skipped = 0
+
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                emotion_raw = row.get("Emotion", "").strip().lower()
+                canonical = _MELD_TO_CANONICAL.get(emotion_raw)
+                
+                txt = row.get("Utterance", "").strip()
+                dia_id = row.get("Dialogue_ID")
+                utt_id = row.get("Utterance_ID")
+                wav_path = self._MELD_AUDIO / f"dia{dia_id}_utt{utt_id}.wav"
+
+                if not canonical or not txt or not wav_path.exists():
+                    skipped += 1
+                    continue
+                
+                # Pop out an image with the same true label from FER
+                if not fer_by_label[canonical]:
+                    skipped += 1
+                    continue
+                
+                syn_image = fer_by_label[canonical].pop(0)
+
+                samples.append((wav_path, txt, syn_image, canonical))
+
+        _rnd.seed(42)
+        _rnd.shuffle(samples)
+
+        if max_samples is not None:
+            samples = samples[:max_samples]
+
+        logger.info(
+            "MELD fusion test split: %d aligned (audio+text+fer_image) loaded, %d skipped.",
+            len(samples), skipped,
         )
         return samples
 
