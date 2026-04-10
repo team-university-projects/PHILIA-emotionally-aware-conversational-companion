@@ -211,9 +211,24 @@ def main() -> None:
 
     # ── Single predictor_fn for the runner ───────────────────────────────────
     def fuse_sample(inp: _FusionInput):
-        audio_result  = audio_emo.predict(inp.audio_path)
-        text_result   = text_emo.predict(inp.text)
-        facial_result = facial_img.predict(inp.image)
+        if config.fusion.audio_weight > 0:
+            audio_result  = audio_emo.predict(inp.audio_path)
+        else:
+            from emotion.audio_emotion import AudioEmotionResult
+            audio_result = AudioEmotionResult(emotion="neutral", confidence=0.0, all_scores={l: 0.0 for l in CANONICAL_LABELS})
+
+        if config.fusion.text_weight > 0:
+            text_result   = text_emo.predict(inp.text)
+        else:
+            from emotion.text_emotion import TextEmotionResult
+            text_result = TextEmotionResult(emotion="neutral", confidence=0.0, all_scores={l: 0.0 for l in CANONICAL_LABELS})
+
+        if config.fusion.facial_weight > 0:
+            facial_result = facial_img.predict(inp.image)
+        else:
+            from emotion.facial_emotion import FacialEmotionResult
+            facial_result = FacialEmotionResult(emotion="neutral", confidence=0.0, all_scores={l: 0.0 for l in CANONICAL_LABELS}, frames_used=0)
+
         return fuser.fuse(audio_result, facial_result, text_result)
 
     # ── Wrap fusion inputs so runner sees (input, label) tuples ───────────────

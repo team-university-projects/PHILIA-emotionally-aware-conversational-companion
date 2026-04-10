@@ -1,5 +1,0 @@
-# Place trained model files here.
-# Expected layout:
-#   models/audio_emotion/   — Wav2Vec / CNN weights
-#   models/facial_emotion/  — CNN / ResNet weights
-# Text emotion model is downloaded automatically via HuggingFace Hub.
