@@ -1,21 +1,10 @@
-"""
-prompt_builder.py — Constructs LLM prompts with emotion, tone, and conversation history.
-
-Responsibilities:
-  - Maintain the PHILIA system persona prompt (keyed to BotProfile.personality)
-  - Inject fused emotion label and tone description into the prompt
-  - Inject conversation history (last N turns) for multi-turn context
-  - Inject the user's transcript as the human turn
-  - Return a fully-formed prompt dict for the LLM
-"""
+# Builds chat-format LLM prompts with injected emotion, tone, and conversation history.
 
 from __future__ import annotations
 
 from config import Config
 from emotion.fusion import FusedEmotion
 from bot.bot_profile import BotProfile
-
-# ── Personality-keyed system templates ────────────────────────────────────────
 
 _SYSTEM_TEMPLATES: dict[str, str] = {
     "empathetic": """\
@@ -48,15 +37,11 @@ Keep your response under 3 sentences unless the user asks for more detail.\
 """,
 }
 
-# Fallback if personality key is unknown
 _DEFAULT_TEMPLATE = _SYSTEM_TEMPLATES["empathetic"]
-
-# Number of past conversation turns to include in context
 _HISTORY_TURNS = 6
 
 
 class PromptBuilder:
-    """Assembles the LLM prompt with injected emotion, tone, and history."""
 
     def __init__(self, config: Config, profile: BotProfile) -> None:
         self._config = config
@@ -69,20 +54,6 @@ class PromptBuilder:
         tone: str,
         history: list[tuple[str, str]] | None = None,
     ) -> list[dict[str, str]]:
-        """
-        Build a chat-format prompt for the LLM.
-
-        Args:
-            transcript: User's transcribed speech.
-            fused:      FusedEmotion containing label and confidence.
-            tone:       Tone descriptor from ToneMapper.
-            history:    Optional list of past (user_text, bot_text) tuples,
-                        most-recent last. Up to _HISTORY_TURNS pairs will be
-                        included for multi-turn context.
-
-        Returns:
-            List of message dicts: [{"role": ..., "content": ...}, ...]
-        """
         template = _SYSTEM_TEMPLATES.get(self._profile.personality, _DEFAULT_TEMPLATE)
         system_content = template.format(
             bot_name=self._profile.name,
@@ -90,18 +61,10 @@ class PromptBuilder:
             confidence=fused.confidence,
             tone=tone,
         )
-
-        messages: list[dict[str, str]] = [
-            {"role": "system", "content": system_content},
-        ]
-
-        # Inject conversation history (last N turns)
+        messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
         if history:
             for user_text, bot_text in history[-_HISTORY_TURNS:]:
                 messages.append({"role": "user",      "content": user_text})
                 messages.append({"role": "assistant", "content": bot_text})
-
-        # Current turn
         messages.append({"role": "user", "content": transcript})
-
         return messages
