@@ -13,7 +13,7 @@ Each push-to-talk turn runs through the following stages:
 3. **Emotion Detection** — Three models run in parallel:
    - Audio: Wav2Vec2 fine-tuned on MELD
    - Facial: ViT fine-tuned on FER2013 / AffectNet, applied to sampled video frames via MediaPipe BlazeFace
-   - Text: BERT fine-tuned on GoEmotions (28 labels)
+   - Text: RoBERTa fine-tuned MELD
 4. **Fusion** — Confidence-weighted late fusion (audio 15%, facial 60%, text 25%) produces a single canonical emotion label.
 5. **Response Generation** — The fused emotion, tone descriptor, and last 6 turns of conversation history are injected into a personality-keyed system prompt, then sent to a local Ollama LLM (llama3.2).
 6. **TTS** — The response is synthesised via edge-tts (Microsoft neural voices) with prosody adjusted per emotion, and played back through the default audio device.
@@ -70,26 +70,11 @@ All emotion models are fine-tuned versions stored under `models/fine_tuned/`:
 |---|---|---|
 | Audio | Wav2Vec2 (xlsr-53) | MELD |
 | Facial | ViT (google/vit-base-patch16-224) | FER2013 + AffectNet |
-| Text | BERT (bert-base-cased GoEmotions) | MELD |
+| Text | RoBERTa | MELD |
 
 Fusion weights were determined via ablation study on the MELD test set.
 
 ---
-
-## Setup
-
-**Requirements:** Python 3.10+, CUDA 12 (optional, for GPU acceleration), [Ollama](https://ollama.com) running locally.
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Pull the LLM
-ollama pull llama3.2
-
-# Run
-python main.py
-```
 
 On first launch, the setup wizard collects your companion's name, avatar, voice, and microphone. The profile is saved to `assets/bot_profile.json` and reused on subsequent launches.
 
@@ -122,22 +107,3 @@ A PyInstaller spec and PowerShell build script are provided under `build/`:
 ```
 
 Output is placed in `dist/PHILIA/` as a portable Windows directory bundle.
-
----
-
-## Project Structure
-
-```
-assets/         Avatars, voice catalog, saved bot profile
-build/          PyInstaller spec and build script
-capture/        Audio and video capture
-emotion/        Three emotion models and fusion
-eval/           Evaluation scripts
-fine_tuning/    Model fine-tuning scripts
-llm/            Prompt builder and LLM backends
-models/         Fine-tuned model weights
-speech/         ASR and TTS
-tone/           Emotion-to-prosody mapping
-ui/             Desktop GUI
-utils/          Logger and health checks
-```
