@@ -44,3 +44,7 @@ python-dotenv>=1.0          # Load .env for API keys
 scikit-learn>=1.4           # Metrics: accuracy, F1, confusion matrix
 matplotlib>=3.8             # Confusion matrix PNG generation
 datasets>=2.18              # HuggingFace dataset streaming (RAVDESS, GoEmotions, FER2013)
+
+pyttsx3>=2.90               # Offline TTS fallback (auto-activated without network)
+customtkinter>=5.2.2        # Modern themed tkinter for desktop app UI
+

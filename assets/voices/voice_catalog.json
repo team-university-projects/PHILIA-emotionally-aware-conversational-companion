@@ -1,0 +1,58 @@
+[
+  {
+    "id": "en-US-JennyNeural",
+    "label": "Jenny (US, Female)",
+    "gender": "female",
+    "accent": "US",
+    "style": "warm"
+  },
+  {
+    "id": "en-US-AriaNeural",
+    "label": "Aria (US, Female, Warm)",
+    "gender": "female",
+    "accent": "US",
+    "style": "warm"
+  },
+  {
+    "id": "en-US-GuyNeural",
+    "label": "Guy (US, Male)",
+    "gender": "male",
+    "accent": "US",
+    "style": "neutral"
+  },
+  {
+    "id": "en-US-DavisNeural",
+    "label": "Davis (US, Male, Deep)",
+    "gender": "male",
+    "accent": "US",
+    "style": "deep"
+  },
+  {
+    "id": "en-GB-SoniaNeural",
+    "label": "Sonia (UK, Female)",
+    "gender": "female",
+    "accent": "UK",
+    "style": "neutral"
+  },
+  {
+    "id": "en-GB-RyanNeural",
+    "label": "Ryan (UK, Male)",
+    "gender": "male",
+    "accent": "UK",
+    "style": "neutral"
+  },
+  {
+    "id": "en-AU-NatashaNeural",
+    "label": "Natasha (AU, Female)",
+    "gender": "female",
+    "accent": "AU",
+    "style": "warm"
+  },
+  {
+    "id": "en-IN-NeerjaNeural",
+    "label": "Neerja (IN, Female)",
+    "gender": "female",
+    "accent": "IN",
+    "style": "warm"
+  }
+]

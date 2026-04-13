@@ -63,11 +63,11 @@ class ModelConfig:
     text_emotion_model_name: str = "models/fine_tuned/text_emotion"
 
     # LLM
-    llm_provider: str = "gemini"         # openai | ollama | gemini
-    llm_model: str = "gemini-2.5-flash"
-    llm_api_key_env: str = "GEMINI_API_KEY"
+    llm_provider: str = "ollama"         # openai | ollama | gemini
+    llm_model: str = "llama3.2"          # fast 3B model — good for companion app
+    llm_api_key_env: str = "GEMINI_API_KEY"  # only needed if switching back to gemini
     llm_max_tokens: int = 512
-    llm_temperature: float = 0.8
+    llm_temperature: float = 0.85        # slightly warmer for companion feel
 
 
 @dataclass
@@ -80,7 +80,7 @@ class FusionConfig:
 
 @dataclass
 class TTSConfig:
-    provider: str = "pyttsx3"        # pyttsx3 | elevenlabs | gtts
+    provider: str = "edge-tts"       # edge-tts (default) | pyttsx3 (offline fallback)
     default_rate: int = 175          # Words per minute
     default_pitch: float = 1.0       # Multiplier
     default_volume: float = 1.0

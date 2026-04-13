@@ -6,40 +6,28 @@ Responsibilities:
   - Convert prosody params to edge-tts SSML rate/pitch/volume tags
   - Synthesise to MP3 bytes using edge-tts (Microsoft neural voices)
   - Play audio directly via sounddevice, return raw bytes for pipeline
+  - Provide voice catalog listing and interactive preview for setup UI
+  - Fall back to pyttsx3 if edge-tts is unavailable (offline mode)
 
 Engine: edge-tts (Microsoft Edge TTS)
   - Free, no API key, high-quality neural voices
   - Requires internet (streams from Microsoft's TTS service)
-  - No training, no model downloads
   - SSML prosody: rate (%/s), pitch (Hz offset), volume (%)
 
-Emotion-to-prosody mapping
---------------------------
-The tone_mapper already converts emotion → TTSParams. This module handles
-the unit conversion from our internal format to SSML strings:
-
-  | Emotion  | Tone        | Rate wpm | Pitch | SSML rate | SSML pitch |
-  |----------|-------------|----------|-------|-----------|------------|
-  | happy    | energetic   | 190      | 1.10  | +15%      | +8Hz       |
-  | sad      | gentle      | 145      | 0.90  | -15%      | -5Hz       |
-  | angry    | firm        | 160      | 0.95  | -5%       | -2Hz       |
-  | fear     | reassuring  | 150      | 1.05  | -10%      | +3Hz       |
-  | surprise | engaged     | 180      | 1.08  | +10%      | +6Hz       |
-  | disgust  | measured    | 155      | 1.00  | -8%       | 0Hz        |
-  | neutral  | balanced    | 175      | 1.00  | 0%        | 0Hz        |
-
-Backend extensibility
----------------------
-  To swap to a different TTS engine, subclass TextToSpeech and override
-  ``synthesise()``. TTSParams and the calling interface stay unchanged.
+Offline fallback: pyttsx3
+  - Fully offline, lower quality, but functional without network
+  - Auto-activated if edge-tts raises an SSL/network error
 """
 
 from __future__ import annotations
 
 import asyncio
 import io
+import json
+import threading
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from config import Config
 from bot.bot_profile import BotProfile
@@ -49,13 +37,32 @@ logger = get_logger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-# Default edge-tts voice. Full list: `edge-tts --list-voices`
-# Jenny is a high-quality US female neural voice.
-_DEFAULT_VOICE = "en-US-JennyNeural"
+_DEFAULT_VOICE      = "en-US-JennyNeural"
+_NEUTRAL_WPM        = 175
+_NEUTRAL_PITCH      = 1.0
+_VOICE_CATALOG_PATH = Path(__file__).parent.parent / "assets" / "voices" / "voice_catalog.json"
 
-# Neutral baseline: tone_mapper uses 175 wpm, multiplier 1.0
-_NEUTRAL_WPM   = 175
-_NEUTRAL_PITCH = 1.0
+# Dedicated asyncio loop for TTS — avoids conflicts with tkinter's event loop
+_TTS_LOOP: asyncio.AbstractEventLoop | None = None
+_TTS_LOOP_LOCK = threading.Lock()
+
+
+def _get_tts_loop() -> asyncio.AbstractEventLoop:
+    """Get (or lazily create) a persistent background asyncio loop for TTS."""
+    global _TTS_LOOP
+    with _TTS_LOOP_LOCK:
+        if _TTS_LOOP is None or _TTS_LOOP.is_closed():
+            _TTS_LOOP = asyncio.new_event_loop()
+            t = threading.Thread(target=_TTS_LOOP.run_forever, daemon=True)
+            t.start()
+        return _TTS_LOOP
+
+
+def _run_async(coro) -> object:
+    """Submit a coroutine to the persistent TTS event loop and block for result."""
+    loop = _get_tts_loop()
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    return future.result(timeout=30)
 
 
 # ── TTSParams ──────────────────────────────────────────────────────────────────
@@ -69,8 +76,7 @@ class TTSParams:
         rate:   Speech rate in words per minute (neutral = 175).
         pitch:  Pitch multiplier relative to neutral (1.0 = no change).
         volume: Volume multiplier (1.0 = full).
-        style:  Voice style label from tone_mapper (informational, not used
-                by edge-tts which derives prosody from rate/pitch/volume).
+        style:  Voice style label from tone_mapper (informational).
     """
     rate:   int    # words per minute
     pitch:  float  # multiplier around 1.0
@@ -81,155 +87,141 @@ class TTSParams:
 # ── Prosody conversion helpers ─────────────────────────────────────────────────
 
 def _wpm_to_ssml_rate(wpm: int) -> str:
-    """
-    Convert words-per-minute to an SSML ``prosody rate`` percentage string.
-
-    edge-tts prosody rate is relative to the voice default (~175 wpm).
-    Formula: ((wpm - neutral) / neutral) * 100  → clipped to [-50%, +50%]
-
-    Examples:
-        190 wpm → +9% → "+9%"
-        145 wpm → -17% → "-17%"
-        175 wpm → 0%  → "+0%"
-    """
     pct = round(((wpm - _NEUTRAL_WPM) / _NEUTRAL_WPM) * 100)
-    pct = max(-50, min(50, pct))   # clamp to safe range
+    pct = max(-50, min(50, pct))
     return f"{pct:+d}%"
 
 
 def _pitch_multiplier_to_ssml(multiplier: float) -> str:
-    """
-    Convert a pitch multiplier to an SSML ``prosody pitch`` Hz-offset string.
-
-    Maps multiplier linearly to ±15 Hz range:
-        1.0 → +0Hz    (neutral)
-        1.1 → +10Hz   (cheerful)
-        0.9 → -10Hz   (gentle/sad)
-
-    edge-tts Hz offsets are clamped to [-20Hz, +20Hz] by the service.
-    """
-    hz = round((multiplier - 1.0) * 100)   # 0.1 → 10Hz
+    hz = round((multiplier - 1.0) * 100)
     hz = max(-20, min(20, hz))
     return f"{hz:+d}Hz"
 
 
 def _volume_to_ssml(volume: float) -> str:
-    """
-    Convert a volume multiplier (0.0–1.0) to SSML ``prosody volume`` percent.
-
-    1.0 → "+0%"  (full, no change)
-    0.8 → "-20%"
-    """
     pct = round((volume - 1.0) * 100)
     pct = max(-50, min(50, pct))
     return f"{pct:+d}%"
 
 
-def _wrap_ssml(text: str, params: TTSParams, voice: str) -> str:
-    """Wrap text in SSML speak/voice/prosody tags for edge-tts."""
-    rate   = _wpm_to_ssml_rate(params.rate)
-    pitch  = _pitch_multiplier_to_ssml(params.pitch)
-    volume = _volume_to_ssml(params.volume)
+# ── Voice catalog ──────────────────────────────────────────────────────────────
 
-    return (
-        '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">'
-        f'<voice name="{voice}">'
-        f'<prosody rate="{rate}" pitch="{pitch}" volume="{volume}">'
-        f"{text}"
-        "</prosody>"
-        "</voice>"
-        "</speak>"
-    )
+def list_voices() -> list[dict]:
+    """
+    Return the curated voice catalog from assets/voices/voice_catalog.json.
+    Falls back to a single default entry if the file is missing.
+    """
+    if _VOICE_CATALOG_PATH.exists():
+        try:
+            return json.loads(_VOICE_CATALOG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return [{"id": _DEFAULT_VOICE, "label": "Jenny (US, Female)", "gender": "female"}]
 
 
 # ── TTS engine ─────────────────────────────────────────────────────────────────
 
 class TextToSpeech:
     """
-    Synthesises speech with emotion-conditioned prosody using edge-tts.
-
-    ``synthesise()`` is synchronous — it wraps the async edge-tts API
-    internally so the rest of the pipeline stays blocking.
+    Synthesises speech with emotion-conditioned prosody using edge-tts,
+    with automatic pyttsx3 fallback for offline environments.
 
     Args:
-        config:  Global :class:`~config.Config` instance.
-        profile: Bot personality profile (used for voice selection).
+        config:  Global Config instance.
+        profile: Bot personality profile (drives voice selection).
     """
 
     def __init__(self, config: Config, profile: BotProfile) -> None:
         self._cfg     = config.tts
         self._profile = profile
-        self._voice   = getattr(profile, "tts_voice", _DEFAULT_VOICE)
+        self._voice   = getattr(profile, "tts_voice", _DEFAULT_VOICE) or _DEFAULT_VOICE
+        self._offline = False   # switches to True if edge-tts network fails
 
-        logger.info(
-            "TTS engine ready — voice=%s provider=edge-tts", self._voice
-        )
+        logger.info("TTS engine ready — voice=%s", self._voice)
 
     # ── Public API ──────────────────────────────────────────────────────────────
 
     def synthesise(self, text: str, params: TTSParams) -> bytes:
         """
-        Synthesise text to speech and play it through the default audio device.
+        Synthesise text to speech and play through the default audio device.
 
-        Uses edge-tts SSML ``<prosody>`` to apply the emotion-derived rate,
-        pitch, and volume from ``params``. Audio is synthesised to an in-memory
-        MP3 buffer, played via sounddevice, and returned as raw bytes.
-
-        Args:
-            text:   LLM response text to speak.
-            params: Prosody parameters from :class:`~tone.tone_mapper.ToneMapper`.
+        Falls back to pyttsx3 if edge-tts encounters a network error.
 
         Returns:
-            Raw MP3 bytes of the synthesised audio.
+            Raw MP3 bytes (or empty bytes on pyttsx3 fallback).
         """
         logger.info(
-            "Synthesising speech — rate=%dwpm pitch=x%.2f volume=x%.2f style=%s",
-            params.rate, params.pitch, params.volume, params.style,
+            "Synthesising — rate=%dwpm pitch=x%.2f style=%s voice=%s",
+            params.rate, params.pitch, params.style, self._voice,
         )
-        audio_bytes = asyncio.run(self._synthesise_async(text, params))
-        self._play(audio_bytes)
-        return audio_bytes
+        if self._offline:
+            self._speak_pyttsx3(text, params)
+            return b""
+
+        try:
+            audio_bytes = _run_async(self._synthesise_async(text, params))
+            self._play(audio_bytes)
+            return audio_bytes
+        except Exception as exc:
+            logger.warning("edge-tts failed (%s) — switching to pyttsx3 fallback", exc)
+            self._offline = True
+            self._speak_pyttsx3(text, params)
+            return b""
+
+    def preview(self, text: str, voice_id: str) -> None:
+        """
+        Play a quick TTS sample in the given voice — used by the setup UI.
+        Runs in the background so it doesn't block the UI thread.
+        """
+        def _play():
+            try:
+                params = TTSParams(rate=175, pitch=1.0, volume=1.0, style="neutral")
+                audio_bytes = _run_async(self._synthesise_async(text, params, voice_override=voice_id))
+                self._play(audio_bytes)
+            except Exception as exc:
+                logger.warning("Voice preview failed: %s", exc)
+
+        threading.Thread(target=_play, daemon=True).start()
+
+    def update_voice(self, voice_id: str) -> None:
+        """Hot-swap the active voice (called after profile save)."""
+        self._voice = voice_id
+        self._offline = False   # reset offline flag on voice change
+        logger.info("TTS voice updated to %s", voice_id)
 
     # ── Async edge-tts ─────────────────────────────────────────────────────────
 
-    async def _synthesise_async(self, text: str, params: TTSParams) -> bytes:
+    async def _synthesise_async(
+        self,
+        text: str,
+        params: TTSParams,
+        voice_override: str | None = None,
+    ) -> bytes:
         """Stream edge-tts output into a memory buffer and return MP3 bytes."""
         try:
-            import edge_tts   # lazy import — only needed for this backend
+            import edge_tts
         except ImportError as exc:
-            raise RuntimeError(
-                "edge-tts not installed. Run: pip install edge-tts"
-            ) from exc
+            raise RuntimeError("edge-tts not installed. Run: pip install edge-tts") from exc
 
+        voice  = voice_override or self._voice
         rate   = _wpm_to_ssml_rate(params.rate)
         pitch  = _pitch_multiplier_to_ssml(params.pitch)
         volume = _volume_to_ssml(params.volume)
 
         buf = io.BytesIO()
-        communicate = edge_tts.Communicate(
-            text,
-            self._voice,
-            rate=rate,
-            pitch=pitch,
-            volume=volume,
-        )
+        communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, volume=volume)
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 buf.write(chunk["data"])
 
         audio_bytes = buf.getvalue()
-        logger.debug("Synthesised %d bytes of MP3 audio.", len(audio_bytes))
+        logger.debug("Synthesised %d bytes of MP3 audio", len(audio_bytes))
         return audio_bytes
 
     # ── Playback ───────────────────────────────────────────────────────────────
 
     def _play(self, mp3_bytes: bytes) -> None:
-        """
-        Decode MP3 bytes and play through the default output device.
-
-        Uses ``soundfile`` + ``sounddevice`` (already in requirements).
-        Falls back to writing a temp file if runtime decoding is unavailable.
-        """
+        """Decode MP3 bytes and play through the default output device."""
         try:
             import sounddevice as sd
             import soundfile as sf
@@ -238,61 +230,21 @@ class TextToSpeech:
             sd.play(data, samplerate=samplerate)
             sd.wait()
         except Exception as exc:
-            logger.warning(
-                "sounddevice playback failed (%s) — saving to tmp/response.mp3", exc
-            )
+            logger.warning("sounddevice playback failed (%s) — saving to tmp/response.mp3", exc)
             _tmp = Path("tmp") / "response.mp3"
             _tmp.parent.mkdir(parents=True, exist_ok=True)
             _tmp.write_bytes(mp3_bytes)
-            logger.info("Audio saved to %s", _tmp)
 
+    # ── pyttsx3 fallback ───────────────────────────────────────────────────────
 
-# ── Standalone test ─────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import sys
-    from config import Config
-    from bot.bot_profile import BotProfile
-
-    cfg     = Config.load()
-    profile = BotProfile()
-    tts     = TextToSpeech(cfg, profile)
-
-    # Emotion-to-prosody mapping demonstration table
-    from tone.tone_mapper import _TONE_MAP, ToneMapper
-    from emotion.fusion import FusedEmotion
-
-    fuser_cfg = cfg
-    tone_mapper = ToneMapper(fuser_cfg)
-
-    print("=" * 55)
-    print("  PHILIA -- TTS Engine Test (edge-tts)")
-    print("=" * 55)
-    print(f"  Voice: {tts._voice}")
-    print()
-    print(f"  {'Emotion':<10} {'Tone':<12} {'Rate wpm':>8} {'SSML rate':>10} {'SSML pitch':>11}")
-    print("  " + "-" * 55)
-    for emotion, (tone_desc, pitch, rate, style) in _TONE_MAP.items():
-        ssml_rate  = _wpm_to_ssml_rate(rate)
-        ssml_pitch = _pitch_multiplier_to_ssml(pitch)
-        print(f"  {emotion:<10} {tone_desc:<12} {rate:>8} {ssml_rate:>10} {ssml_pitch:>11}")
-
-    test_text = sys.argv[1] if len(sys.argv) > 1 else (
-        "I'm sorry to hear you had such a difficult day. "
-        "It sounds incredibly frustrating. I'm here for you."
-    )
-
-    # Default: sad prosody
-    emotion_label = sys.argv[2] if len(sys.argv) > 2 else "sad"
-    dummy_fused = FusedEmotion(
-        label=emotion_label,
-        confidence=0.8,
-        distribution={},
-        breakdown={},
-    )
-    tone_desc, params = tone_mapper.map(dummy_fused)
-
-    print(f"\nSpeaking as '{emotion_label}' (tone: {tone_desc})...")
-    print(f"Text: {test_text}")
-    tts.synthesise(test_text, params)
-    print("Done.")
+    def _speak_pyttsx3(self, text: str, params: TTSParams) -> None:
+        """Offline TTS via pyttsx3. Lower quality but no network needed."""
+        try:
+            import pyttsx3
+            engine = pyttsx3.init()
+            engine.setProperty("rate", params.rate)
+            engine.setProperty("volume", params.volume)
+            engine.say(text)
+            engine.runAndWait()
+        except Exception as exc:
+            logger.error("pyttsx3 fallback also failed: %s", exc)
