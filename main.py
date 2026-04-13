@@ -80,7 +80,7 @@ def _initialise_components(
 
     # ── Capture devices ───────────────────────────────────────────────────────
     update_status("Initialising capture devices…", 0.15)
-    audio_cap = AudioCapture(config)
+    audio_cap = AudioCapture(config, profile)
     video_cap = VideoCapture(config)
 
     # ── Speech ────────────────────────────────────────────────────────────────

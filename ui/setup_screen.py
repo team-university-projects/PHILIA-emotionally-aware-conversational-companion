@@ -63,6 +63,10 @@ class SetupScreen(ctk.CTkToplevel):
         self._personality_var = tk.StringVar(value="empathetic")
         self._avatar_var      = tk.StringVar(value="luna.png")
         self._voice_var       = tk.StringVar(value="en-US-JennyNeural")
+        self._mic_device_idx  = tk.IntVar(value=-1)  # -1 = system default
+
+        # Build mic device list once
+        self._mic_options: list[tuple[int, str]] = self._enumerate_mics()
 
         self._avatar_images: dict[str, ImageTk.PhotoImage] = {}
         self._avatar_buttons: dict[str, ctk.CTkButton] = {}
@@ -233,6 +237,39 @@ class SetupScreen(ctk.CTkToplevel):
 
         self._refresh_personality_cards(grid)
 
+        # ── Microphone selector ───────────────────────────────────────────────
+        tk.Label(body, text="Microphone", font=("Segoe UI", 12, "bold"),
+                 fg=_TEXT_PRIMARY, bg=_BG).pack(anchor="w", pady=(20, 6))
+        tk.Label(
+            body,
+            text="Choose the mic you speak into. Using the right device greatly improves transcription.",
+            font=("Segoe UI", 10), fg=_TEXT_DIM, bg=_BG, wraplength=650, justify="left",
+        ).pack(anchor="w", pady=(0, 6))
+
+        mic_frame = ctk.CTkScrollableFrame(body, width=640, height=110, fg_color=_SURFACE)
+        mic_frame.pack(anchor="w", fill="x")
+
+        # System default option
+        ctk.CTkRadioButton(
+            mic_frame, text="System Default (let Windows decide)",
+            variable=self._mic_device_idx, value=-1,
+            fg_color=_ACCENT, hover_color=_ACCENT_HOVER,
+            text_color=_TEXT_PRIMARY, font=("Segoe UI", 11),
+        ).pack(anchor="w", padx=12, pady=(8, 4))
+
+        for idx, name in self._mic_options:
+            # Flag recommended devices
+            lower = name.lower()
+            is_rec = any(k in lower for k in ("headset", "headphone", "usb", "jabra", "sony", "wh-", "bose", "airpods"))
+            label = f"{name}  ✓ Recommended" if is_rec else name
+            color = _GREEN if is_rec else _TEXT_PRIMARY
+            ctk.CTkRadioButton(
+                mic_frame, text=label,
+                variable=self._mic_device_idx, value=idx,
+                fg_color=_ACCENT, hover_color=_ACCENT_HOVER,
+                text_color=color, font=("Segoe UI", 11),
+            ).pack(anchor="w", padx=12, pady=2)
+
     def _refresh_personality_cards(self, grid: tk.Frame) -> None:
         selected = self._personality_var.get()
         for widget in grid.winfo_children():
@@ -361,7 +398,7 @@ class SetupScreen(ctk.CTkToplevel):
     def _finish(self) -> None:
         name   = self._name_var.get().strip() or "PHILIA"
         avatar = self._avatar_var.get()
-        stem   = Path(avatar).stem  # "luna.png" → "luna"
+        stem   = Path(avatar).stem  # "luna.png" -> "luna"
 
         profile = BotProfile(
             name=name,
@@ -369,7 +406,35 @@ class SetupScreen(ctk.CTkToplevel):
             avatar_path=f"assets/avatars/{avatar}",
             avatar_style=stem,
             personality=self._personality_var.get(),
+            mic_device_index=self._mic_device_idx.get(),
         )
         profile.save()
         self.destroy()
         self._on_complete(profile)
+
+    # ── Helpers ────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _enumerate_mics() -> list[tuple[int, str]]:
+        """Return list of (device_index, name) for real input devices only."""
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+            seen_names: set[str] = set()
+            result = []
+            skip_keywords = ("steam", "pc speaker", "stereo mix", "mapper", "primary sound")
+            for i, d in enumerate(devices):
+                if d["max_input_channels"] < 1:
+                    continue
+                name = d["name"]
+                # Deduplicate near-identical names (WASAPI exposes devices multiple times)
+                short = name[:28].lower()
+                if short in seen_names:
+                    continue
+                if any(k in name.lower() for k in skip_keywords):
+                    continue
+                seen_names.add(short)
+                result.append((i, name))
+            return result
+        except Exception:
+            return []

@@ -60,12 +60,23 @@ class AudioCapture:
 
     PTT_KEY: str = "space"
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, profile=None) -> None:
         self._sample_rate: int = config.audio.sample_rate
         self._channels: int = config.audio.channels
         self._blocksize: int = config.audio.chunk_size
-        self._device: int | None = config.audio.device_index
+        # Use profile's chosen mic if set, otherwise fall back to config/system default
+        mic_idx = getattr(profile, "mic_device_index", -1) if profile else -1
+        self._device: int | None = mic_idx if mic_idx >= 0 else config.audio.device_index
+        if self._device is not None:
+            import sounddevice as sd
+            try:
+                dev_info = sd.query_devices(self._device)
+                logger.info("Microphone: [%d] %s", self._device, dev_info["name"])
+            except Exception:
+                logger.warning("Mic device index %d not found — using system default.", self._device)
+                self._device = None
         _RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+
 
     # ── Public API ─────────────────────────────────────────────────────────────
 

@@ -194,11 +194,18 @@ class Transcriber:
         segments, info = self._model.transcribe(
             str(wav_path),
             beam_size=5,             # Wider beam — notably better with accents
-            language=None,           # Auto-detect; handles accent diversity better
-            initial_prompt="A natural conversation with an AI companion.",
-            vad_filter=False,        # Keep silence; meaningful for emotion
-            word_timestamps=False,   # Not needed here
-            condition_on_previous_text=False,  # Avoid hallucination on short turns
+            language="en",           # Lock to English — faster and more accurate than auto-detect
+            initial_prompt="The following is a natural conversation with an empathetic AI companion.",
+            vad_filter=True,         # Skip non-speech frames — avoids hallucinations from mic noise
+            vad_parameters=dict(
+                threshold=0.3,           # Fairly sensitive — catch soft speech
+                min_speech_duration_ms=100,
+                max_speech_duration_s=30,
+                min_silence_duration_ms=300,
+                speech_pad_ms=200,       # Pad edges so word boundaries aren't clipped
+            ),
+            word_timestamps=False,
+            condition_on_previous_text=False,  # Avoid hallucination chaining on short turns
         )
 
         logger.info(

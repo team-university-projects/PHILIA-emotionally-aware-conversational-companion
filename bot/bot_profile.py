@@ -41,6 +41,7 @@ class BotProfile:
     avatar_path: str = "assets/avatars/luna.png"
     avatar_style: str = "luna"              # avatar key (filename stem)
     personality: str = "empathetic"         # controls system prompt style
+    mic_device_index: int = -1             # -1 = system default; set by setup wizard
 
     @classmethod
     def load(cls, config: Config) -> "BotProfile":
