@@ -18,6 +18,10 @@ import os
 import sys
 from typing import Callable
 
+# Suppress OpenCV MSMF/DSHOW verbose stderr before cv2 is imported anywhere
+os.environ.setdefault("OPENCV_VIDEOIO_DEBUG", "0")
+os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
+
 # ── PyTorch CUDA DLL search path fix (Windows) ────────────────────────────────
 import pathlib as _pathlib
 for _sp in sys.path:

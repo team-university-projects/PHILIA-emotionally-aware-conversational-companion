@@ -5,6 +5,15 @@ Responsibilities:
   - Manage the lifecycle of all UI windows (loading → setup → chat)
   - Expose a clean public API for the pipeline to update the UI
   - Bridge push-to-talk events from the UI to the pipeline
+
+Thread model:
+  - main thread:       tkinter event loop (one window at a time)
+  - background thread: model initialisation (reports progress via after())
+
+Window sequence:
+  LoadingScreen.mainloop()  →  (closes itself)
+  SetupScreen (first run)   →  (wait_window)
+  ChatWindow.mainloop()     →  app exits
 """
 
 from __future__ import annotations
@@ -15,45 +24,31 @@ from typing import Callable
 
 import customtkinter as ctk
 
-from bot.bot_profile import BotProfile
+from bot.bot_profile import BotProfile, _PROFILE_PATH
 from config import Config
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Global CTk theme
+# Global CTk theme — set before any window is created
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
 
 class Interface:
     """
-    Manages all UI windows and acts as the bridge between the pipeline and GUI.
+    Manages all UI windows and bridges the pipeline ↔ GUI.
 
-    Lifecycle:
-        1. __init__() — create a hidden root window
-        2. run_loading(initialise_fn) — show loading screen, run model init
-        3. After init, if first run → show_setup_wizard()
-        4. show_chat(profile) — open main chat window
-        5. mainloop() — enter tkinter event loop (call once at the end of main)
-
-    Pipeline callbacks (thread-safe, callable from any thread):
-        - set_stage(stage)
-        - update_emotion(label, confidence, ...)
-        - add_message(role, text)
+    Usage in main():
+        ui = Interface(config)
+        ui.set_ptt_callback(fn)
+        ui.run_loading(initialise_fn)   # blocks until chat window closes
     """
 
     def __init__(self, config: Config) -> None:
         self._config   = config
         self._profile: BotProfile | None = None
-
-        # Hidden root — keeps tkinter alive across toplevel windows
-        self._root = ctk.CTk()
-        self._root.withdraw()
-
-        self._loading: "LoadingScreen | None" = None
-        self._chat:    "ChatWindow | None"    = None
-
+        self._chat:    "ChatWindow | None" = None
         self._on_ptt_callback: Callable | None = None
 
     # ── Public pipeline API ─────────────────────────────────────────────────────
@@ -85,63 +80,79 @@ class Interface:
 
     def run_loading(self, initialise_fn: Callable) -> None:
         """
-        Show the loading/splash screen and run initialise_fn in a background
-        thread. On success, opens chat window. On failure, shows error.
+        Phase 1: Show loading splash + run model init in background thread.
+        Blocks until the entire app lifecycle completes (chat window closed).
 
-        Args:
-            initialise_fn: Function(update_status, set_check) → BotProfile
-                           that loads all heavy models and runs health checks.
-                           Must call update_status(text, progress) and
-                           set_check(name, ok, critical) as it progresses.
+        initialise_fn signature:
+            fn(update_status: Callable, set_check: Callable) -> BotProfile
         """
         from ui.loading_screen import LoadingScreen
 
-        self._loading = LoadingScreen(
-            on_ready=self._on_loading_complete,
-            on_error=self._on_loading_error,
+        loading = LoadingScreen(
+            on_ready=lambda: None,   # unused — transition is driven below
+            on_error=lambda msg: None,
         )
 
-        def _run():
+        def _run_init():
             try:
                 profile = initialise_fn(
-                    update_status=self._loading.set_status,
-                    set_check=self._loading.set_check,
+                    update_status=loading.set_status,
+                    set_check=loading.set_check,
                 )
                 self._profile = profile
-                self._loading.close_and_continue()
-                self._root.after(0, self._post_loading)
+                # Schedule transition on the main thread (loading is still alive here)
+                loading.after(0, lambda: self._transition_from_loading(loading))
             except Exception as exc:
                 logger.exception("Initialisation failed")
-                self._loading.show_error(str(exc))
+                loading.show_error(str(exc))
 
-        threading.Thread(target=_run, daemon=True).start()
-        self._loading.mainloop()
+        threading.Thread(target=_run_init, daemon=True).start()
+        loading.mainloop()   # ← main thread blocks here while loading screen is open
 
-    def _post_loading(self) -> None:
+        # ── After loading.mainloop() returns, run setup + chat ──────────────────
+        self._run_post_loading()
+
+    def _transition_from_loading(self, loading: "LoadingScreen") -> None:
+        """Called on main thread: close loading screen so mainloop() can return."""
+        loading._pulse_active = False
+        loading.after(300, loading.destroy)   # small delay so final status is visible
+
+    def _run_post_loading(self) -> None:
         """Called on main thread after loading screen closes."""
-        from bot.bot_profile import _PROFILE_PATH
         profile = self._profile or BotProfile()
+
+        # First-run: show wizard
         if not _PROFILE_PATH.exists():
-            self._show_setup_wizard(on_complete=self._open_chat)
-        else:
-            self._open_chat(profile)
+            profile = self._run_setup_wizard()
 
-    def _on_loading_complete(self) -> None:
-        pass   # handled via close_and_continue
+        self._open_chat(profile)
 
-    def _on_loading_error(self, msg: str) -> None:
-        logger.error("Loading error: %s", msg)
-
-    def _show_setup_wizard(self, on_complete: Callable[[BotProfile], None]) -> None:
+    def _run_setup_wizard(self) -> BotProfile:
+        """Run the setup wizard modally and return the saved profile."""
         from ui.setup_screen import SetupScreen
+
+        result_holder: list[BotProfile] = []
+
+        # SetupScreen needs a parent — create a temporary hidden root for it
+        tmp_root = ctk.CTk()
+        tmp_root.withdraw()
+
+        def _on_complete(p: BotProfile):
+            result_holder.append(p)
+            tmp_root.destroy()
+
         wizard = SetupScreen(
-            parent=self._root,
+            parent=tmp_root,
             config=self._config,
-            on_complete=on_complete,
+            on_complete=_on_complete,
         )
-        self._root.wait_window(wizard)
+        wizard.protocol("WM_DELETE_WINDOW", lambda: None)  # Disable X button
+        tmp_root.mainloop()
+
+        return result_holder[0] if result_holder else BotProfile()
 
     def _open_chat(self, profile: BotProfile) -> None:
+        """Open the main chat window (blocks until it's closed)."""
         self._profile = profile
         from ui.chat_window import ChatWindow
         self._chat = ChatWindow(
@@ -149,13 +160,12 @@ class Interface:
             on_ptt=self._on_ptt_callback or (lambda: None),
             on_settings=self._show_settings,
         )
-        # Run the chat window as the main event loop
         self._chat.mainloop()
 
     # ── Settings ─────────────────────────────────────────────────────────────
 
     def _show_settings(self) -> None:
-        """Open a simple settings panel over the chat window."""
+        """Re-open the setup wizard as a settings panel over the chat window."""
         if not self._chat:
             return
 
@@ -164,22 +174,14 @@ class Interface:
         def _on_save(new_profile: BotProfile):
             self._profile = new_profile
             logger.info("Profile updated: name=%s voice=%s", new_profile.name, new_profile.tts_voice)
-            # Notify the chat window (it won't auto-reload avatar without restart, so show a tip)
             if self._chat:
                 self._chat.add_message(
                     "bot",
-                    f"Profile saved! Changes to name, avatar, and voice will fully apply on next start.",
+                    "Profile saved! New avatar and voice will apply on the next start.",
                 )
 
-        wizard = SetupScreen(
+        SetupScreen(
             parent=self._chat,
             config=self._config,
             on_complete=_on_save,
         )
-
-    def mainloop(self) -> None:
-        """Enter the tkinter event loop (only if root is still alive)."""
-        try:
-            self._root.mainloop()
-        except Exception:
-            pass

@@ -81,6 +81,12 @@ class VideoCapture:
         self._writer: Optional[cv2.VideoWriter] = None
         self._current_video_path: Optional[Path] = None
 
+        # Safe defaults — overwritten by open() with real camera values.
+        # Initialised here so stop_recording() never raises AttributeError
+        # if open() was skipped (no webcam) or raised before setting them.
+        self._actual_fps: float = float(config.video.capture_fps) or 15.0
+        self._actual_size: tuple[int, int] = (config.video.frame_width, config.video.frame_height)
+
         # Background thread for continuously reading + writing frames
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()

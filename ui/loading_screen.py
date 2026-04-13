@@ -47,6 +47,7 @@ class LoadingScreen(ctk.CTk):
         super().__init__()
         self._on_ready = on_ready
         self._on_error = on_error
+        self._icon_img = None         # populated in _build_ui after window exists
 
         self._setup_window()
         self._build_ui()
@@ -70,23 +71,27 @@ class LoadingScreen(ctk.CTk):
     # ── UI construction ─────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        # Icon / logo
+        # Icon / logo — must be created after the Tk window is fully alive
         icon_path = _ASSETS / "icon.png"
         if icon_path.exists():
-            img = Image.open(icon_path).resize((96, 96), Image.LANCZOS)
-            self._icon_img = ImageTk.PhotoImage(img)
-            tk.Label(self, image=self._icon_img, bg=_BG).pack(pady=(40, 0))
+            try:
+                img = Image.open(icon_path).resize((96, 96), Image.LANCZOS)
+                self._icon_img = ctk.CTkImage(light_image=img, dark_image=img, size=(96, 96))
+                icon_lbl = ctk.CTkLabel(self, image=self._icon_img, text="")
+                icon_lbl.pack(pady=(40, 0))
+            except Exception:
+                ctk.CTkLabel(self, text="◈", font=("Segoe UI", 52), text_color=_ACCENT).pack(pady=(40, 0))
         else:
-            tk.Label(self, text="◈", font=("Segoe UI", 52), fg=_ACCENT, bg=_BG).pack(pady=(40, 0))
+            ctk.CTkLabel(self, text="◈", font=("Segoe UI", 52), text_color=_ACCENT).pack(pady=(40, 0))
 
         # Title
-        tk.Label(
+        ctk.CTkLabel(
             self, text="PHILIA", font=("Segoe UI", 28, "bold"),
-            fg=_TEXT_PRIMARY, bg=_BG,
+            text_color=_TEXT_PRIMARY,
         ).pack(pady=(10, 0))
-        tk.Label(
+        ctk.CTkLabel(
             self, text="Emotionally Aware Conversational Companion",
-            font=("Segoe UI", 11), fg=_TEXT_DIM, bg=_BG,
+            font=("Segoe UI", 11), text_color=_TEXT_DIM,
         ).pack(pady=(2, 20))
 
         # Animated pulse ring (canvas)
@@ -100,10 +105,11 @@ class LoadingScreen(ctk.CTk):
 
         # Status label
         self._status_var = tk.StringVar(value="Initialising…")
-        tk.Label(
+        self._status_lbl = ctk.CTkLabel(
             self, textvariable=self._status_var,
-            font=("Segoe UI", 11), fg=_TEXT_DIM, bg=_BG,
-        ).pack(pady=(12, 6))
+            font=("Segoe UI", 11), text_color=_TEXT_DIM,
+        )
+        self._status_lbl.pack(pady=(12, 6))
 
         # Progress bar
         self._progress = ctk.CTkProgressBar(
@@ -114,27 +120,26 @@ class LoadingScreen(ctk.CTk):
         self._progress.set(0)
 
         # Check list
-        self._checks_frame = tk.Frame(self, bg=_BG)
+        self._checks_frame = ctk.CTkFrame(self, fg_color="transparent")
         self._checks_frame.pack(fill="x", padx=60)
-        self._check_labels: dict[str, tk.Label] = {}
+        self._check_labels: dict[str, ctk.CTkLabel] = {}
 
         for name in ["Ollama", "Emotion Models", "Webcam", "Microphone"]:
-            row = tk.Frame(self._checks_frame, bg=_BG)
+            row = ctk.CTkFrame(self._checks_frame, fg_color="transparent")
             row.pack(fill="x", pady=1)
-            dot = tk.Label(row, text="◌", font=("Segoe UI", 13), fg=_TEXT_DIM, bg=_BG, width=2)
+            dot = ctk.CTkLabel(row, text="◌", font=("Segoe UI", 13), text_color=_TEXT_DIM, width=28)
             dot.pack(side="left")
-            lbl = tk.Label(row, text=name, font=("Segoe UI", 10), fg=_TEXT_DIM, bg=_BG, anchor="w")
-            lbl.pack(side="left")
+            ctk.CTkLabel(row, text=name, font=("Segoe UI", 10), text_color=_TEXT_DIM, anchor="w").pack(side="left")
             self._check_labels[name] = dot
 
         # Error callout (hidden initially)
         self._error_var = tk.StringVar(value="")
-        self._error_label = tk.Label(
+        self._error_lbl = ctk.CTkLabel(
             self, textvariable=self._error_var,
-            font=("Segoe UI", 10), fg=_RED, bg=_BG,
+            font=("Segoe UI", 10), text_color=_RED,
             wraplength=440, justify="center",
         )
-        self._error_label.pack(pady=(12, 0))
+        self._error_lbl.pack(pady=(12, 0))
 
     # ── Animation ───────────────────────────────────────────────────────────────
 
@@ -168,15 +173,15 @@ class LoadingScreen(ctk.CTk):
             dot = self._check_labels.get(name)
             if dot:
                 if ok:
-                    dot.config(text="✓", fg=_GREEN)
+                    dot.configure(text="✓", text_color=_GREEN)
                 elif critical:
-                    dot.config(text="✗", fg=_RED)
+                    dot.configure(text="✗", text_color=_RED)
                 else:
-                    dot.config(text="⚠", fg=_YELLOW)
+                    dot.configure(text="⚠", text_color=_YELLOW)
         self.after(0, _update)
 
     def show_error(self, message: str) -> None:
-        """Display a critical error and a retry/quit button."""
+        """Display a critical error and a quit button."""
         def _update():
             self._pulse_active = False
             self._status_var.set("Cannot start PHILIA")
@@ -184,7 +189,7 @@ class LoadingScreen(ctk.CTk):
             ctk.CTkButton(
                 self, text="Quit", width=120,
                 fg_color=_RED, hover_color="#C0392B",
-                command=self.destroy,
+                command=self.quit,
             ).pack(pady=(16, 0))
         self.after(0, _update)
 
