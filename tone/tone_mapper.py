@@ -7,13 +7,16 @@ from emotion.fusion import FusedEmotion
 from speech.tts import TTSParams
 
 _TONE_MAP: dict[str, tuple[str, float, int, str]] = {
-    "angry":   ("firm",       0.95, 160, "assertive"),
-    "disgust": ("measured",   1.00, 155, "neutral"),
-    "fear":    ("reassuring", 1.05, 150, "calm"),
-    "happy":   ("energetic",  1.10, 190, "cheerful"),
-    "neutral": ("balanced",   1.00, 175, "neutral"),
-    "sad":     ("gentle",     0.90, 145, "soft"),
-    "surprise":("engaged",    1.08, 180, "curious"),
+    # (tone_desc, pitch_mult, rate_wpm, style)
+    # Pitch: 0.97–1.04 (±3–4 Hz)  |  Rate: 162–182 wpm (±~5%)
+    # Keeps the same voice identity while still conveying emotional colouring.
+    "angry":   ("firm",       0.98, 168, "assertive"),
+    "disgust": ("measured",   0.98, 164, "neutral"),
+    "fear":    ("reassuring", 0.98, 162, "calm"),
+    "happy":   ("energetic",  1.03, 182, "cheerful"),
+    "neutral": ("balanced",   1.00, 172, "neutral"),
+    "sad":     ("gentle",     0.97, 162, "empathetic"),
+    "surprise":("engaged",    1.02, 178, "curious"),
 }
 
 

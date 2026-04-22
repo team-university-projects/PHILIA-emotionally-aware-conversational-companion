@@ -193,12 +193,22 @@ def main() -> None:
     _components: list = []
     _history: list[tuple[str, str]] = []
 
-    def _initialise(update_status: Callable, set_check: Callable) -> BotProfile:
-        profile = BotProfile.load(config)
+    def _initialise(profile: BotProfile, update_status: Callable, set_check: Callable) -> BotProfile:
         comps = _initialise_components(config, profile, update_status, set_check)
         _components.clear()
         _components.extend(comps)
+        # Wire AudioCapture's PTT events into the UI
+        audio_cap = comps[2]  # index 2 = audio_cap in the tuple
+        ui.set_ptt_events(audio_cap.ptt_press_event, audio_cap.ptt_release_event)
         return profile
+
+    def _on_profile_final(final_profile: BotProfile) -> None:
+        """Called after the new-profile wizard completes — hot-swap voice + persona."""
+        if _components:
+            tts        = _components[12]   # TextToSpeech
+            prompt_bld = _components[10]   # PromptBuilder
+            tts.update_voice(final_profile.tts_voice)
+            prompt_bld.update_profile(final_profile)
 
     def _on_ptt() -> None:
         if not _components:
@@ -206,7 +216,7 @@ def main() -> None:
         run_turn(tuple(_components), ui, _history)
 
     ui.set_ptt_callback(_on_ptt)
-    ui.run_loading(_initialise)
+    ui.run_loading(_initialise, on_profile_final=_on_profile_final)
 
 
 if __name__ == "__main__":

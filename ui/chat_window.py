@@ -91,13 +91,18 @@ class ChatWindow(ctk.CTk):
         profile: BotProfile,
         on_ptt: Callable,
         on_settings: Callable | None = None,
+        ptt_press_event=None,
+        ptt_release_event=None,
     ) -> None:
         super().__init__()
-        self._profile     = profile
-        self._on_ptt      = on_ptt
-        self._on_settings = on_settings
+        self._profile          = profile
+        self._on_ptt           = on_ptt
+        self._on_settings      = on_settings
+        self._ptt_press_event  = ptt_press_event
+        self._ptt_release_event= ptt_release_event
 
         # Animation state
+        self._ptt_active       = False  # synchronous guard against key-repeat
         self._pulse_step    = 0
         self._pulse_growing = True
         self._is_speaking   = False
@@ -323,7 +328,7 @@ class ChatWindow(ctk.CTk):
             fg_color=_ACCENT, hover_color=_ACCENT_HOVER,
             font=("Segoe UI", 14, "bold"),
             corner_radius=26,
-            command=self._trigger_ptt,
+            command=lambda: self._on_space_press(None),
         )
         self._mic_btn.pack(side="left", expand=True)
 
@@ -372,13 +377,32 @@ class ChatWindow(ctk.CTk):
     # ── Key bindings ────────────────────────────────────────────────────────────
 
     def _bind_keys(self) -> None:
-        self.bind("<space>",        lambda e: self._trigger_ptt())
-        self.bind("<KeyRelease-space>", lambda e: None)
+        self._release_job = None
+        self.bind("<space>", self._on_space_press)
+        self.bind("<KeyRelease-space>", self._on_space_release)
 
-    def _trigger_ptt(self) -> None:
-        if self._is_listening or self._is_processing:
+    def _on_space_press(self, event) -> None:
+        if self._release_job is not None:
+            self.after_cancel(self._release_job)
+            self._release_job = None
+
+        if self._is_listening or self._is_processing or self._ptt_active:
             return
+        self._ptt_active = True
+        if self._ptt_release_event:
+            self._ptt_release_event.clear()
         threading.Thread(target=self._on_ptt, daemon=True).start()
+
+    def _on_space_release(self, event) -> None:
+        if self._release_job is not None:
+            self.after_cancel(self._release_job)
+        self._release_job = self.after(50, self._do_release)
+
+    def _do_release(self) -> None:
+        self._release_job = None
+        self._ptt_active = False
+        if self._ptt_release_event:
+            self._ptt_release_event.set()
 
     # ── Public update API (called from pipeline thread via after()) ─────────────
 

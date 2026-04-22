@@ -103,20 +103,15 @@ class Transcriber:
     def _run_inference(self, wav_path: Path) -> str:
         segments, info = self._model.transcribe(
             str(wav_path),
-            beam_size=5,
-            language="en",
-            initial_prompt="The following is a natural conversation with an empathetic AI companion.",
-            vad_filter=True,
-            vad_parameters=dict(
-                threshold=0.3,
-                min_speech_duration_ms=100,
-                max_speech_duration_s=30,
-                min_silence_duration_ms=300,
-                speech_pad_ms=200,
-            ),
-            word_timestamps=False,
-            condition_on_previous_text=False,
+            beam_size=5,             # Wider beam — notably better with accents
+            language=None,           # Auto-detect; handles accent diversity better
+            initial_prompt="A natural conversation with an AI companion.",
+            vad_filter=False,        # Keep silence; meaningful for emotion
+            word_timestamps=False,   # Not needed here
+            condition_on_previous_text=False,  # Avoid hallucination on short turns
         )
         logger.info("Detected language '%s' (confidence %.2f)", info.language, info.language_probability)
-        parts = [seg.text for seg in segments]
-        return " ".join(parts).strip()
+        return " ".join(seg.text for seg in segments).strip()
+
+
+

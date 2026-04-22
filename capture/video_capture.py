@@ -38,29 +38,72 @@ class VideoCapture:
         self._stop_event = threading.Event()
         self._record_event = threading.Event()
         self._lock = threading.Lock()
+        self._device_index = config.video.device_index  # may be overridden by auto-detect
 
     def open(self) -> None:
-        self._cap = cv2.VideoCapture(self._cfg.device_index)
-        if not self._cap.isOpened():
+        device = self._cfg.device_index
+        cap, device = self._open_best(device)
+        if cap is None:
             raise RuntimeError(
-                f"Could not open webcam (device index={self._cfg.device_index}). "
+                f"No usable webcam found (tried device {self._cfg.device_index} and indices 0-4). "
                 "Ensure the camera is connected and not in use by another app."
             )
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._cfg.frame_width)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._cfg.frame_height)
-        self._cap.set(cv2.CAP_PROP_FPS, self._cfg.capture_fps)
 
-        actual_w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        actual_h = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        actual_fps = self._cap.get(cv2.CAP_PROP_FPS) or self._cfg.capture_fps
-        self._actual_fps = actual_fps
-        self._actual_size = (actual_w, actual_h)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  self._cfg.frame_width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._cfg.frame_height)
+        cap.set(cv2.CAP_PROP_FPS,          self._cfg.capture_fps)
 
-        logger.info("Webcam opened — device=%d, resolution=%dx%d, fps=%.1f",
-                    self._cfg.device_index, actual_w, actual_h, actual_fps)
+        actual_w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        actual_fps = cap.get(cv2.CAP_PROP_FPS) or self._cfg.capture_fps
+        self._cap          = cap
+        self._device_index = device
+        self._actual_fps   = actual_fps
+        self._actual_size  = (actual_w, actual_h)
+
+        logger.info(
+            "Webcam opened — device=%d, resolution=%dx%d, fps=%.1f",
+            device, actual_w, actual_h, actual_fps,
+        )
+
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._frame_loop, daemon=True, name="VideoCapture")
+        self._thread = threading.Thread(
+            target=self._frame_loop,
+            daemon=True,
+            name="VideoCapture",
+        )
         self._thread.start()
+
+    @staticmethod
+    def _open_best(preferred: int) -> tuple["cv2.VideoCapture | None", int]:
+        """Open the best available webcam, falling back to a scan of 0-4."""
+        # Try preferred device first
+        cap = cv2.VideoCapture(preferred)
+        if cap.isOpened():
+            ret, _ = cap.read()
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            if ret and fps >= 5:
+                return cap, preferred
+            cap.release()
+        else:
+            cap.release()
+
+        # Scan 0-4 for a working camera
+        for idx in range(5):
+            if idx == preferred:
+                continue
+            c = cv2.VideoCapture(idx)
+            if not c.isOpened():
+                c.release()
+                continue
+            ret, _ = c.read()
+            fps = c.get(cv2.CAP_PROP_FPS)
+            if ret and fps >= 5:
+                logger.info("Auto-selected webcam device=%d (fps=%.1f)", idx, fps)
+                return c, idx
+            c.release()
+
+        return None, -1
 
     def close(self) -> None:
         self._stop_event.set()
@@ -155,20 +198,22 @@ class VideoCapture:
                 self._cap.release()
                 self._cap = None
             time.sleep(0.5)
-            self._cap = cv2.VideoCapture(self._cfg.device_index)
-            if not self._cap.isOpened():
-                logger.error("Webcam could not be reopened on device %d.", self._cfg.device_index)
+            cap, device = self._open_best(self._device_index)
+            if cap is None:
+                logger.error("Webcam could not be reopened on any device.")
                 return False
-            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH,  self._cfg.frame_width)
-            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._cfg.frame_height)
-            self._cap.set(cv2.CAP_PROP_FPS,          self._cfg.capture_fps)
-            actual_w   = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            actual_h   = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            actual_fps = self._cap.get(cv2.CAP_PROP_FPS) or self._cfg.capture_fps
-            self._actual_fps  = actual_fps
-            self._actual_size = (actual_w, actual_h)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH,  self._cfg.frame_width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._cfg.frame_height)
+            cap.set(cv2.CAP_PROP_FPS,          self._cfg.capture_fps)
+            actual_w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            actual_fps = cap.get(cv2.CAP_PROP_FPS) or self._cfg.capture_fps
+            self._cap          = cap
+            self._device_index = device
+            self._actual_fps   = actual_fps
+            self._actual_size  = (actual_w, actual_h)
             logger.info("Webcam recovery successful — device=%d %dx%d@%.0ffps.",
-                        self._cfg.device_index, actual_w, actual_h, actual_fps)
+                        device, actual_w, actual_h, actual_fps)
             return True
         except Exception as exc:
             logger.error("Webcam recovery error: %s", exc)

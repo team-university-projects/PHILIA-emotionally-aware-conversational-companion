@@ -1,16 +1,19 @@
-# First-run bot creation wizard: Welcome → Name & Personality → Avatar → Voice → Microphone.
+# Profile creation / edit wizard: Name+Personality → Avatar → Voice (3 steps).
 
 from __future__ import annotations
 
+import shutil
+import threading
 import tkinter as tk
 from pathlib import Path
+from tkinter import filedialog, messagebox
 from typing import Callable
 
 import customtkinter as ctk
 from PIL import Image, ImageTk
 
-from bot.bot_profile import BotProfile, AVATAR_CATALOG, PERSONALITY_PRESETS
-from speech.tts import TextToSpeech, TTSParams, list_voices
+from bot.bot_profile import BotProfile, PRESET_AVATARS, PERSONALITY_PRESETS
+from speech.tts import TextToSpeech, list_voices
 from config import Config
 
 _BG           = "#0F0D1A"
@@ -23,36 +26,46 @@ _TEXT_PRIMARY = "#F0EEFF"
 _TEXT_DIM     = "#8B80B0"
 _GREEN        = "#4CAF82"
 
-_ASSETS = Path(__file__).parent.parent / "assets"
+_ASSETS      = Path(__file__).parent.parent / "assets"
+_AVATARS_DIR = _ASSETS / "avatars"
 _PREVIEW_PHRASE = "Hello! I'm here to listen and support you."
 
-# Steps: 0=Welcome, 1=Name+Personality, 2=Avatar, 3=Voice, 4=Microphone
+# Steps 1-3 (no welcome, no mic)
 _STEPS = [
-    ("",              ""),
-    ("Name Your Companion",  "Give your AI companion a name and personality."),
-    ("Choose an Avatar",     "Select the face that feels right."),
+    ("Name Your Companion",  "Give your companion a name and choose a personality."),
+    ("Choose an Avatar",     "Pick an image or upload your own."),
     ("Pick a Voice",         "Choose how your companion will speak to you."),
-    ("Select Microphone",    "Choose the microphone you speak into."),
 ]
-_WIZARD_STEPS = 4  # steps 1–4 show dots
+_WIZARD_STEPS = len(_STEPS)
 
 
 class SetupScreen(ctk.CTkToplevel):
 
-    def __init__(self, parent: tk.Misc, config: Config, on_complete: Callable[[BotProfile], None]) -> None:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        config: Config,
+        on_complete: Callable[[BotProfile], None],
+        existing: BotProfile | None = None,
+    ) -> None:
         super().__init__(parent)
         self._config      = config
         self._on_complete = on_complete
+        self._existing    = existing          # None = new, BotProfile = edit mode
         self._step        = 0
 
-        self._name_var        = tk.StringVar(value="PHILIA")
-        self._personality_var = tk.StringVar(value="empathetic")
-        self._avatar_var      = tk.StringVar(value="luna.png")
-        self._voice_var       = tk.StringVar(value="en-US-JennyNeural")
-        self._mic_device_idx  = tk.IntVar(value=-1)
+        # State
+        initial_name        = existing.name        if existing else ""
+        initial_personality = existing.personality if existing else "empathetic"
+        initial_avatar      = Path(existing.avatar_path).name if existing else "luna.png"
+        initial_voice       = existing.tts_voice   if existing else "en-US-JennyNeural"
 
-        self._mic_options: list[tuple[int, str]] = self._enumerate_mics()
-        self._avatar_images: dict[str, ImageTk.PhotoImage] = {}
+        self._name_var        = tk.StringVar(value=initial_name)
+        self._personality_var = tk.StringVar(value=initial_personality)
+        self._avatar_var      = tk.StringVar(value=initial_avatar)  # filename only
+        self._uploaded_src    = [None]   # [str | None] — source path of uploaded image
+        self._voice_var       = tk.StringVar(value=initial_voice)
+        self._avatar_images:  dict[str, ImageTk.PhotoImage] = {}
         self._tts = TextToSpeech(config, BotProfile())
 
         self._setup_window()
@@ -62,11 +75,12 @@ class SetupScreen(ctk.CTkToplevel):
     # ── Window ─────────────────────────────────────────────────────────────────
 
     def _setup_window(self) -> None:
-        self.title("PHILIA — Create Your Companion")
+        mode = "Edit Companion" if self._existing else "Create Companion"
+        self.title(f"PHILIA — {mode}")
         self.configure(fg_color=_BG)
-        w, h = 800, 680
+        w, h = 800, 640
         self.geometry(f"{w}x{h}")
-        self.minsize(640, 540)
+        self.minsize(640, 520)
         self.resizable(True, True)
         self.grab_set()
         self.focus_set()
@@ -75,10 +89,10 @@ class SetupScreen(ctk.CTkToplevel):
         y = (self.winfo_screenheight() - h) // 2
         self.geometry(f"+{x}+{y}")
 
-    # ── Shell ─────────────────────────────────────────────────────────────────
+    # ── Shell ──────────────────────────────────────────────────────────────────
 
     def _build_shell(self) -> None:
-        # Header (hidden on welcome step)
+        # Header
         self._header = tk.Frame(self, bg=_BG)
         self._header.pack(fill="x", padx=48, pady=(28, 0))
 
@@ -94,7 +108,7 @@ class SetupScreen(ctk.CTkToplevel):
         )
         self._subtitle_lbl.pack(anchor="w", pady=(2, 0))
 
-        # Step dots (1–4 only)
+        # Step dots
         dots_frame = tk.Frame(self._header, bg=_BG)
         dots_frame.pack(anchor="w", pady=(10, 0))
         self._dot_labels: list[tk.Label] = []
@@ -103,18 +117,14 @@ class SetupScreen(ctk.CTkToplevel):
             d.pack(side="left", padx=3)
             self._dot_labels.append(d)
 
-        # Divider
-        self._divider = tk.Frame(self, bg=_BORDER, height=1)
-        self._divider.pack(fill="x", padx=48, pady=(14, 0))
+        tk.Frame(self, bg=_BORDER, height=1).pack(fill="x", padx=48, pady=(14, 0))
 
-        # Body — expands to fill all available space between header and footer
+        # Body
         self._body = tk.Frame(self, bg=_BG)
         self._body.pack(fill="both", expand=True, padx=48, pady=20)
 
         # Footer
-        self._footer_divider = tk.Frame(self, bg=_BORDER, height=1)
-        self._footer_divider.pack(fill="x", padx=48)
-
+        tk.Frame(self, bg=_BORDER, height=1).pack(fill="x", padx=48)
         footer = tk.Frame(self, bg=_BG)
         footer.pack(fill="x", padx=48, pady=16)
 
@@ -126,60 +136,47 @@ class SetupScreen(ctk.CTkToplevel):
         self._back_btn.pack(side="left")
 
         self._next_btn = ctk.CTkButton(
-            footer, text="Next", width=140,
+            footer, text="Next", width=150,
             fg_color=_ACCENT, hover_color=_ACCENT_HOVER,
             font=("Segoe UI", 13, "bold"), command=self._go_next,
         )
         self._next_btn.pack(side="right")
 
-    # ── Navigation ────────────────────────────────────────────────────────────
+    # ── Navigation ─────────────────────────────────────────────────────────────
 
     def _show_step(self, step: int) -> None:
         self._step = step
         for w in self._body.winfo_children():
             w.destroy()
 
-        is_welcome = step == 0
-        last_step  = len(_STEPS) - 1
+        self._title_lbl.config(text=_STEPS[step][0])
+        self._subtitle_lbl.config(text=_STEPS[step][1])
 
-        # Header / dots visibility
-        if is_welcome:
-            self._header.pack_forget()
-            self._divider.pack_forget()
-        else:
-            self._header.pack(fill="x", padx=48, pady=(28, 0), before=self._divider)
-            self._divider.pack(fill="x", padx=48, pady=(14, 0), before=self._body)
-            self._title_lbl.config(text=_STEPS[step][0])
-            self._subtitle_lbl.config(text=_STEPS[step][1])
-            dot_idx = step - 1
-            for i, d in enumerate(self._dot_labels):
-                d.config(fg=_ACCENT if i == dot_idx else _TEXT_DIM)
+        for i, d in enumerate(self._dot_labels):
+            d.config(fg=_ACCENT if i == step else _TEXT_DIM)
 
-        # Back button
         if step == 0:
             self._back_btn.configure(state="disabled", fg_color=_SURFACE, text_color=_BORDER)
         else:
             self._back_btn.configure(state="normal", fg_color=_SURFACE2, text_color=_TEXT_DIM)
 
-        # Next button label
-        if step == last_step:
-            self._next_btn.configure(text="Start Chatting")
-        elif step == 0:
-            self._next_btn.configure(text="Get Started")
-        else:
-            self._next_btn.configure(text="Next")
+        label = "Save" if self._existing else "Start Chatting"
+        self._next_btn.configure(text=label if step == _WIZARD_STEPS - 1 else "Next")
 
-        _builders = [
-            self._build_welcome,
-            self._build_step_name,
-            self._build_step_avatar,
-            self._build_step_voice,
-            self._build_step_mic,
-        ]
-        _builders[step]()
+        [self._build_step_name, self._build_step_avatar, self._build_step_voice][step]()
 
     def _go_next(self) -> None:
-        if self._step < len(_STEPS) - 1:
+        if self._step == 0:
+            name = self._name_var.get().strip()
+            if not name:
+                messagebox.showwarning("Name required", "Please enter a name for your companion.", parent=self)
+                return
+            # Check uniqueness (skip if editing same name)
+            existing_names = {p.name for p in BotProfile.list_all()}
+            if name in existing_names and (self._existing is None or name != self._existing.name):
+                messagebox.showwarning("Name taken", f"A companion named '{name}' already exists. Choose a different name.", parent=self)
+                return
+        if self._step < _WIZARD_STEPS - 1:
             self._show_step(self._step + 1)
         else:
             self._finish()
@@ -188,49 +185,7 @@ class SetupScreen(ctk.CTkToplevel):
         if self._step > 0:
             self._show_step(self._step - 1)
 
-    # ── Step 0: Welcome ───────────────────────────────────────────────────────
-
-    def _build_welcome(self) -> None:
-        body = self._body
-        body.columnconfigure(0, weight=1)
-
-        # Centre content vertically
-        spacer = tk.Frame(body, bg=_BG)
-        spacer.pack(expand=True, fill="both")
-
-        inner = tk.Frame(body, bg=_BG)
-        inner.pack()
-
-        tk.Label(
-            inner, text="PHILIA",
-            font=("Segoe UI", 52, "bold"),
-            fg=_ACCENT, bg=_BG,
-        ).pack()
-
-        tk.Label(
-            inner, text="Emotionally Aware Conversational Companion",
-            font=("Segoe UI", 14),
-            fg=_TEXT_DIM, bg=_BG,
-        ).pack(pady=(4, 0))
-
-        tk.Frame(inner, bg=_BORDER, height=1).pack(fill="x", pady=28)
-
-        tk.Label(
-            inner,
-            text=(
-                "PHILIA listens to your voice, reads your expressions,\n"
-                "and responds with genuine emotional awareness.\n\n"
-                "This wizard will help you set up your companion.\n"
-                "It only takes a minute."
-            ),
-            font=("Segoe UI", 12),
-            fg=_TEXT_PRIMARY, bg=_BG,
-            justify="center",
-        ).pack()
-
-        tk.Frame(body, bg=_BG).pack(expand=True, fill="both")
-
-    # ── Step 1: Name & Personality ────────────────────────────────────────────
+    # ── Step 1: Name & Personality ─────────────────────────────────────────────
 
     def _build_step_name(self) -> None:
         body = self._body
@@ -242,7 +197,7 @@ class SetupScreen(ctk.CTkToplevel):
             body, textvariable=self._name_var, width=340, height=42,
             fg_color=_SURFACE, border_color=_BORDER,
             text_color=_TEXT_PRIMARY, font=("Segoe UI", 13),
-            placeholder_text="e.g.  PHILIA, Nova, Kai...",
+            placeholder_text="e.g. Luna, Justin, Nova...",
         ).pack(anchor="w")
 
         tk.Label(body, text="Personality", font=("Segoe UI", 12, "bold"),
@@ -258,9 +213,7 @@ class SetupScreen(ctk.CTkToplevel):
             card.grid(row=row, column=col, padx=(0, 12) if col == 0 else 0, pady=6)
             card.pack_propagate(False)
 
-            key   = preset["key"]
-            label = preset["label"]
-            desc  = preset["desc"]
+            key, label, desc = preset["key"], preset["label"], preset["desc"]
 
             def _select(k=key):
                 self._personality_var.set(k)
@@ -285,73 +238,121 @@ class SetupScreen(ctk.CTkToplevel):
             if not cards:
                 continue
             card = cards[0]
-            is_sel = preset["key"] == selected
-            bg = _ACCENT if is_sel else _SURFACE
+            bg = _ACCENT if preset["key"] == selected else _SURFACE
             card.config(bg=bg)
             for child in card.winfo_children():
                 child.config(bg=bg)
 
-    # ── Step 2: Avatar ────────────────────────────────────────────────────────
+    # ── Step 2: Avatar ─────────────────────────────────────────────────────────
 
     def _build_step_avatar(self) -> None:
         body = self._body
-        avatar_dir = _ASSETS / "avatars"
 
-        outer = tk.Frame(body, bg=_BG)
-        outer.pack(fill="both", expand=True)
+        # Upload preview area (shown when an image is uploaded)
+        self._upload_preview_frame = tk.Frame(body, bg=_BG)
+        self._upload_preview_frame.pack(anchor="w", pady=(0, 8))
+        self._upload_preview_lbl: tk.Label | None = None
+        if self._uploaded_src[0]:
+            self._show_upload_preview(self._uploaded_src[0])
 
-        grid = tk.Frame(outer, bg=_BG)
-        grid.pack(anchor="center", expand=True)
+        # Preset grid — 6 images, 3 per row, no names
+        grid = tk.Frame(body, bg=_BG)
+        grid.pack(anchor="center")
 
-        for i, av in enumerate(AVATAR_CATALOG):
+        for i, filename in enumerate(PRESET_AVATARS):
             col = i % 3
             row = i // 3
-            filename = av["file"]
-
-            card = tk.Frame(grid, bg=_SURFACE, cursor="hand2", width=190, height=210)
+            card = tk.Frame(grid, bg=_SURFACE, cursor="hand2", width=165, height=165)
             card.grid(row=row, column=col, padx=8, pady=8)
             card.pack_propagate(False)
 
-            img_path = avatar_dir / filename
+            img_path = _AVATARS_DIR / filename
             if img_path.exists():
-                img = Image.open(img_path).resize((96, 96), Image.LANCZOS)
+                img = Image.open(img_path).resize((100, 100), Image.LANCZOS)
                 photo = ImageTk.PhotoImage(img)
                 self._avatar_images[filename] = photo
-                img_lbl = tk.Label(card, image=photo, bg=_SURFACE, cursor="hand2")
+                lbl = tk.Label(card, image=photo, bg=_SURFACE, cursor="hand2")
             else:
-                img_lbl = tk.Label(card, text="◈", font=("Segoe UI", 36), fg=_ACCENT, bg=_SURFACE)
-            img_lbl.pack(pady=(14, 4))
+                lbl = tk.Label(card, text="◈", font=("Segoe UI", 36), fg=_ACCENT, bg=_SURFACE)
+            lbl.pack(expand=True)
 
-            name_lbl = tk.Label(card, text=av["name"], font=("Segoe UI", 12, "bold"),
-                                fg=_TEXT_PRIMARY, bg=_SURFACE, cursor="hand2")
-            name_lbl.pack()
-            desc_lbl = tk.Label(card, text=av["desc"], font=("Segoe UI", 9),
-                                fg=_TEXT_DIM, bg=_SURFACE, cursor="hand2")
-            desc_lbl.pack()
-
-            def _select(f=filename):
+            def _sel(f=filename):
                 self._avatar_var.set(f)
+                self._uploaded_src[0] = None       # clear any upload
+                self._clear_upload_preview()
                 self._refresh_avatar_cards(grid)
 
-            for w in (card, img_lbl, name_lbl, desc_lbl):
-                w.bind("<Button-1>", lambda e, f=filename: _select(f))
+            for w in (card, lbl):
+                w.bind("<Button-1>", lambda e, f=filename: _sel(f))
 
         self._refresh_avatar_cards(grid)
 
+        # Upload button
+        upload_row = tk.Frame(body, bg=_BG)
+        upload_row.pack(anchor="w", pady=(12, 0))
+
+        ctk.CTkButton(
+            upload_row, text="⬆  Upload your own image", width=220, height=36,
+            fg_color=_SURFACE2, hover_color=_BORDER,
+            text_color=_TEXT_DIM, font=("Segoe UI", 11),
+            command=lambda: self._pick_upload(grid),
+        ).pack(side="left")
+
+        self._upload_status = tk.Label(upload_row, text="", font=("Segoe UI", 10),
+                                       fg=_GREEN, bg=_BG)
+        self._upload_status.pack(side="left", padx=10)
+
+    def _pick_upload(self, grid: tk.Frame) -> None:
+        path = filedialog.askopenfilename(
+            title="Choose an avatar image",
+            filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp *.bmp")],
+            parent=self,
+        )
+        if not path:
+            return
+        self._uploaded_src[0] = path
+        self._avatar_var.set("__uploaded__")
+        self._show_upload_preview(path)
+        self._refresh_avatar_cards(grid)   # deselect presets
+        self._upload_status.config(text=f"✓  {Path(path).name}")
+
+    def _show_upload_preview(self, src: str) -> None:
+        self._clear_upload_preview()
+        try:
+            img = Image.open(src).resize((72, 72), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self._avatar_images["__uploaded__"] = photo
+            self._upload_preview_lbl = tk.Label(
+                self._upload_preview_frame, image=photo,
+                bg=_BG, relief="flat",
+            )
+            self._upload_preview_lbl.pack(side="left")
+            tk.Label(
+                self._upload_preview_frame,
+                text="  Custom image selected", font=("Segoe UI", 10),
+                fg=_GREEN, bg=_BG,
+            ).pack(side="left")
+        except Exception:
+            pass
+
+    def _clear_upload_preview(self) -> None:
+        for w in self._upload_preview_frame.winfo_children():
+            w.destroy()
+        self._upload_preview_lbl = None
+
     def _refresh_avatar_cards(self, grid: tk.Frame) -> None:
         selected = self._avatar_var.get()
-        for i, av in enumerate(AVATAR_CATALOG):
+        for i, filename in enumerate(PRESET_AVATARS):
             cards = grid.grid_slaves(row=i // 3, column=i % 3)
             if not cards:
                 continue
             card = cards[0]
-            is_sel = av["file"] == selected
-            bg = _ACCENT if is_sel else _SURFACE
+            bg = _ACCENT if filename == selected else _SURFACE
             card.config(bg=bg)
             for child in card.winfo_children():
                 child.config(bg=bg)
 
-    # ── Step 3: Voice ─────────────────────────────────────────────────────────
+    # ── Step 3: Voice ──────────────────────────────────────────────────────────
 
     def _build_step_voice(self) -> None:
         body = self._body
@@ -382,79 +383,38 @@ class SetupScreen(ctk.CTkToplevel):
         self._preview_status.pack(anchor="w", pady=(8, 0))
 
     def _preview_voice(self, voice_id: str) -> None:
-        label = voice_id.split("-")[1] if "-" in voice_id else voice_id
-        self._preview_status.config(text=f"Playing preview for {label}...")
+        self._preview_status.config(text="Playing preview...")
         self._tts.preview(_PREVIEW_PHRASE, voice_id)
         self.after(3500, lambda: self._preview_status.config(text=""))
 
-    # ── Step 4: Microphone ────────────────────────────────────────────────────
-
-    def _build_step_mic(self) -> None:
-        body = self._body
-
-        tk.Label(
-            body,
-            text="Using the right microphone significantly improves transcription accuracy.",
-            font=("Segoe UI", 11), fg=_TEXT_DIM, bg=_BG, wraplength=680, justify="left",
-        ).pack(anchor="w", pady=(0, 12))
-
-        scroll = ctk.CTkScrollableFrame(body, fg_color=_SURFACE)
-        scroll.pack(fill="both", expand=True)
-
-        ctk.CTkRadioButton(
-            scroll, text="System Default (let Windows decide)",
-            variable=self._mic_device_idx, value=-1,
-            fg_color=_ACCENT, hover_color=_ACCENT_HOVER,
-            text_color=_TEXT_PRIMARY, font=("Segoe UI", 11),
-        ).pack(anchor="w", padx=12, pady=(10, 4))
-
-        for idx, name in self._mic_options:
-            lower = name.lower()
-            is_rec = any(k in lower for k in ("headset", "headphone", "usb", "jabra", "sony", "wh-", "bose", "airpods"))
-            label = f"{name}   (Recommended)" if is_rec else name
-            color = _GREEN if is_rec else _TEXT_PRIMARY
-            ctk.CTkRadioButton(
-                scroll, text=label,
-                variable=self._mic_device_idx, value=idx,
-                fg_color=_ACCENT, hover_color=_ACCENT_HOVER,
-                text_color=color, font=("Segoe UI", 11),
-            ).pack(anchor="w", padx=12, pady=3)
-
-    # ── Finish ────────────────────────────────────────────────────────────────
+    # ── Finish ─────────────────────────────────────────────────────────────────
 
     def _finish(self) -> None:
-        name  = self._name_var.get().strip() or "PHILIA"
-        avatar = self._avatar_var.get()
+        from bot.bot_profile import _AVATARS_DIR as _PROF_AVATARS
+        name    = self._name_var.get().strip() or "PHILIA"
+        src     = self._uploaded_src[0]
+        avatar_filename = self._avatar_var.get()
+
+        if src:
+            # Copy uploaded image to assets/profiles/avatars/<name>.<ext>
+            ext  = Path(src).suffix or ".png"
+            dest = _PROF_AVATARS / f"{name}{ext}"
+            _PROF_AVATARS.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            avatar_path = f"assets/profiles/avatars/{name}{ext}"
+        else:
+            avatar_path = f"assets/avatars/{avatar_filename}"
+
+        # If editing and the name changed, delete the old JSON
+        if self._existing and self._existing.name != name:
+            self._existing.delete()
+
         profile = BotProfile(
             name=name,
             tts_voice=self._voice_var.get(),
-            avatar_path=f"assets/avatars/{avatar}",
-            avatar_style=Path(avatar).stem,
+            avatar_path=avatar_path,
             personality=self._personality_var.get(),
-            mic_device_index=self._mic_device_idx.get(),
         )
         profile.save()
         self.destroy()
         self._on_complete(profile)
-
-    # ── Helpers ───────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _enumerate_mics() -> list[tuple[int, str]]:
-        try:
-            import sounddevice as sd
-            seen: set[str] = set()
-            result = []
-            skip = ("steam", "pc speaker", "stereo mix", "mapper", "primary sound")
-            for i, d in enumerate(sd.query_devices()):
-                if d["max_input_channels"] < 1:
-                    continue
-                name = d["name"]
-                short = name[:28].lower()
-                if short in seen or any(k in name.lower() for k in skip):
-                    continue
-                seen.add(short)
-                result.append((i, name))
-            return result
-        except Exception:
-            return []

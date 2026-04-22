@@ -1,21 +1,21 @@
-# Bot persona configuration — loaded/saved as JSON and consumed by UI, TTS, and PromptBuilder.
+# Bot persona configuration — per-profile JSON files in assets/profiles/.
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, asdict
+from datetime import datetime
 from pathlib import Path
+
 from config import Config
 
-_PROFILE_PATH = Path(__file__).parent.parent / "assets" / "bot_profile.json"
+_PROFILES_DIR = Path(__file__).parent.parent / "assets" / "profiles"
+_AVATARS_DIR  = _PROFILES_DIR / "avatars"
 
-AVATAR_CATALOG: list[dict[str, str]] = [
-    {"file": "luna.png",  "name": "Luna",  "desc": "Warm & Empathetic"},
-    {"file": "orion.png", "name": "Orion", "desc": "Calm & Wise"},
-    {"file": "sol.png",   "name": "Sol",   "desc": "Cheerful & Energetic"},
-    {"file": "sage.png",  "name": "Sage",  "desc": "Thoughtful & Serene"},
-    {"file": "nova.png",  "name": "Nova",  "desc": "Mysterious & Elegant"},
-    {"file": "kai.png",   "name": "Kai",   "desc": "Friendly & Approachable"},
+# Preset avatar filenames in assets/avatars/ — shown without names in the wizard.
+PRESET_AVATARS: list[str] = [
+    "luna.png", "orion.png", "sol.png",
+    "sage.png", "nova.png",  "kai.png",
 ]
 
 PERSONALITY_PRESETS: list[dict[str, str]] = [
@@ -28,25 +28,64 @@ PERSONALITY_PRESETS: list[dict[str, str]] = [
 
 @dataclass
 class BotProfile:
-    name: str = "PHILIA"
-    tts_voice: str = "en-US-JennyNeural"
+    name:        str = "PHILIA"
+    tts_voice:   str = "en-US-JennyNeural"
     avatar_path: str = "assets/avatars/luna.png"
-    avatar_style: str = "luna"
     personality: str = "empathetic"
-    mic_device_index: int = -1
+    last_used:   str = ""
+
+    # ── Persistence ────────────────────────────────────────────────────────────
+
+    @classmethod
+    def list_all(cls) -> list["BotProfile"]:
+        """Return all saved profiles sorted by most recently used (newest first)."""
+        _PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+        profiles: list["BotProfile"] = []
+        for path in sorted(_PROFILES_DIR.glob("*.json")):
+            try:
+                data  = json.loads(path.read_text(encoding="utf-8"))
+                known = set(cls.__dataclass_fields__)
+                profiles.append(cls(**{k: v for k, v in data.items() if k in known}))
+            except Exception:
+                pass
+        profiles.sort(key=lambda p: p.last_used, reverse=True)
+        return profiles
 
     @classmethod
     def load(cls, config: Config) -> "BotProfile":
-        if _PROFILE_PATH.exists():
-            data = json.loads(_PROFILE_PATH.read_text(encoding="utf-8"))
-            known = {f for f in cls.__dataclass_fields__}
-            return cls(**{k: v for k, v in data.items() if k in known})
-        return cls()
+        """Return the most recently used profile, or a fresh default."""
+        all_profiles = cls.list_all()
+        return all_profiles[0] if all_profiles else cls()
 
     def save(self) -> None:
-        _PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _PROFILE_PATH.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        """Write this profile to assets/profiles/<name>.json."""
+        _PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+        _AVATARS_DIR.mkdir(parents=True, exist_ok=True)
+        self.last_used = datetime.now().isoformat()
+        path = _PROFILES_DIR / f"{self.name}.json"
+        path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+
+    def touch(self) -> None:
+        """Update last_used timestamp without altering other fields."""
+        self.last_used = datetime.now().isoformat()
+        path = _PROFILES_DIR / f"{self.name}.json"
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["last_used"] = self.last_used
+            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    def delete(self) -> None:
+        """Remove this profile's JSON file from disk."""
+        path = _PROFILES_DIR / f"{self.name}.json"
+        if path.exists():
+            path.unlink()
+
+    # ── Computed ───────────────────────────────────────────────────────────────
 
     @property
     def is_configured(self) -> bool:
-        return _PROFILE_PATH.exists()
+        return bool(self.list_all())
+
+    def resolve_avatar_path(self) -> Path:
+        """Return the absolute Path to this profile's avatar image."""
+        return Path(__file__).parent.parent / self.avatar_path

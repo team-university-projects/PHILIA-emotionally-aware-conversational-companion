@@ -1,0 +1,8 @@
+{
+  "name": "TEST 1",
+  "tts_voice": "en-US-AriaNeural",
+  "avatar_path": "assets/avatars/luna.png",
+  "avatar_style": "luna",
+  "personality": "empathetic",
+  "mic_device_index": 3
+}
